@@ -1,0 +1,14 @@
+{
+  "name": "Aufmaßprüfung GAEB",
+  "short_name": "Aufmaß GAEB",
+  "description": "Offline-App zur Aufmaßprüfung auf Basis von GAEB-LV- und X31-Dateien aus ORCA AVA.",
+  "start_url": ".",
+  "scope": ".",
+  "display": "standalone",
+  "background_color": "#101214",
+  "theme_color": "#1c6dd0",
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png" }
+  ]
+}
