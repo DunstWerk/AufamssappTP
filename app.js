@@ -679,6 +679,19 @@ function formatCsvNumber(value) {
   return String(value).replace('.', ',');
 }
 
+/**
+ * Erzwingt Text-Interpretation in Excel für Werte, die wie Zahlen/Daten
+ * aussehen (z.B. Positionsnummern wie "02.03.0001"). Ohne diesen Trick
+ * interpretiert Excel den Punkt beim CSV-Öffnen je nach Gebietsschema als
+ * Tausendertrennzeichen und verstümmelt/vertauscht führende Nullen und
+ * Zifferngruppen (z.B. "02.03.0001" -> "20.30.001"). Die "=".."""-Formel
+ * zwingt Excel zur reinen Text-Auswertung, unabhängig vom Gebietsschema.
+ */
+function forceExcelText(value) {
+  const str = value === null || value === undefined ? '' : String(value);
+  return `="${str.replace(/"/g, '""')}"`;
+}
+
 function handleExcelExport() {
   try {
     const header = [
@@ -698,10 +711,10 @@ function handleExcelExport() {
     for (const entry of lvParseResult.flatRenderList) {
       if (entry.type !== 'item') continue;
       const rec = positionsById.get(entry.id) || defaultRecord(entry);
-      const effectiveQty = round2((rec.menge || 0) * FAKTOR[rec.klassifikation]);
+      const effectiveQty = rec.geprueft ? round2((rec.menge || 0) * FAKTOR[rec.klassifikation]) : null;
       const kategorie = (entry.ancestorPath || []).map((a) => a.label).filter(Boolean).join(' / ');
       rows.push([
-        entry.positionNumber,
+        forceExcelText(entry.positionNumber),
         kategorie,
         entry.kurztext,
         entry.qu,
