@@ -335,7 +335,7 @@ function buildItemRow(entry) {
           </div>
           <div class="row-badges">
             ${entry.isLumpSum ? '<span class="tag">Pausch.</span>' : ''}
-            ${x31Missing ? '<span class="tag tag-warn">nicht in X31</span>' : ''}
+            ${x31Missing ? '<span class="tag tag-warn">neu in X31</span>' : ''}
             ${unklar ? '<span class="tag tag-warn">Formel unklar</span>' : ''}
             ${multiRow ? '<span class="tag tag-warn">mehrzeilig</span>' : ''}
           </div>
@@ -569,7 +569,7 @@ function renderBanner() {
     const { idsOnlyInLv, idsOnlyInX31 } = meta.importDiagnostics;
     const parts = [];
     if (idsOnlyInLv && idsOnlyInLv.length) {
-      parts.push(`${idsOnlyInLv.length} Position(en) im LV haben keinen Eintrag in der importierten X31 und können daher nicht automatisch exportiert werden (siehe Filter "nur Positionen ohne X31-Eintrag").`);
+      parts.push(`${idsOnlyInLv.length} Position(en) haben noch keinen Eintrag in der importierten X31 (normal bei ORCA — nur begonnene Mengenermittlungen werden exportiert). Werden beim Export bei Bedarf neu in die X31 eingefügt, sobald sie geprüft sind (siehe Filter "neu in X31").`);
     }
     if (idsOnlyInX31 && idsOnlyInX31.length) {
       parts.push(`${idsOnlyInX31.length} Eintrag/Einträge in der X31 haben keine passende Position im LV und werden ignoriert.`);
@@ -590,45 +590,47 @@ async function handleExport() {
   const btn = document.getElementById('btn-export');
   btn.disabled = true;
   try {
-    const touched = [];
-    let excludedNoAnchor = 0;
+    const toExport = [];
     for (const entry of lvParseResult.flatRenderList) {
       if (entry.type !== 'item') continue;
       const rec = positionsById.get(entry.id);
       if (!rec || !rec.geprueft) continue;
-      const hasAnchor = rec.origSnapshot && rec.origSnapshot.x31RawRow != null;
-      if (!hasAnchor) {
-        excludedNoAnchor++;
-        continue;
-      }
       const effectiveQty = round2((rec.menge || 0) * FAKTOR[rec.klassifikation]);
-      touched.push({
+      const hasAnchor = rec.origSnapshot && rec.origSnapshot.x31RawRow != null;
+      toExport.push({
         id: entry.id,
         effectiveQty,
-        origRawRow: rec.origSnapshot.x31RawRow,
-        multiRowWarning: rec.origSnapshot.multiRowWarning,
+        origRawRow: hasAnchor ? rec.origSnapshot.x31RawRow : null,
+        multiRowWarning: rec.origSnapshot ? rec.origSnapshot.multiRowWarning : false,
+        // Nur für den Insert-Pfad gebraucht (kein X31-Eintrag vorhanden):
+        rNoPart: entry.rNoPart,
+        ancestorPath: entry.ancestorPath,
       });
     }
 
-    if (touched.length === 0) {
-      showToast(
-        excludedNoAnchor > 0
-          ? `Keine exportierbaren Positionen: ${excludedNoAnchor} geprüfte Position(en) haben keinen X31-Eintrag.`
-          : 'Keine geprüften Positionen zum Exportieren vorhanden.',
-        true
-      );
+    if (toExport.length === 0) {
+      showToast('Keine geprüften Positionen zum Exportieren vorhanden.', true);
       return;
     }
 
-    const { patchedText, changedCount } = patchX31(x31OriginalText, touched);
+    const { patchedText, updatedCount, insertedCount, skipped } = patchX31(x31OriginalText, toExport, x31ParseResult);
+    if (updatedCount + insertedCount === 0) {
+      showToast('Export abgebrochen: keine der geprüften Positionen konnte verarbeitet werden — ' + skipped.map((s) => s.reason).join(' '), true);
+      return;
+    }
     downloadText(patchedText, buildExportFilename());
 
-    let msg = `Export erstellt: ${changedCount} Position(en) aktualisiert.`;
-    if (excludedNoAnchor > 0) msg += ` ${excludedNoAnchor} geprüfte Position(en) ohne X31-Eintrag wurden NICHT exportiert.`;
+    const parts = [];
+    if (updatedCount) parts.push(`${updatedCount} Position(en) aktualisiert`);
+    if (insertedCount) parts.push(`${insertedCount} Position(en) neu in die X31 eingefügt`);
+    let msg = `Export erstellt: ${parts.join(', ')}.`;
+    if (skipped.length) {
+      msg += ` ${skipped.length} Position(en) konnten nicht verarbeitet werden und fehlen im Export (${skipped.map((s) => s.id).join(', ')}).`;
+    }
     if (!REB_FORMAT_VALIDATED) {
       msg += ' Hinweis: Exportformat der Mengenermittlung ist vorläufig — bitte Ergebnis nach Re-Import in ORCA AVA prüfen.';
     }
-    showToast(msg, false);
+    showToast(msg, skipped.length > 0);
   } catch (err) {
     console.error(err);
     showToast('Export fehlgeschlagen: ' + err.message, true);

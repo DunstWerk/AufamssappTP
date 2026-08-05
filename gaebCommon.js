@@ -191,7 +191,10 @@ export function walkBoQBody(bodyEl, handlers, ancestorStack = []) {
       };
       handlers.onCategoryEnter && handlers.onCategoryEnter(category, ancestorStack.length);
       const nestedBody = firstDirectChild(child, 'BoQBody');
-      const nextStack = ancestorStack.concat([category.rNoPart]);
+      // ancestorStack trägt volle Kategorie-Objekte {id, rNoPart, label} (nicht nur
+      // rNoPart), damit Aufrufer sowohl die Positionsnummer bilden als auch — für
+      // den Export-Insert-Pfad — die Kategorie-IDs der Ahnenkette kennen können.
+      const nextStack = ancestorStack.concat([{ id: category.id, rNoPart: category.rNoPart, label: category.label }]);
       if (nestedBody) walkBoQBody(nestedBody, handlers, nextStack);
       handlers.onCategoryExit && handlers.onCategoryExit(category, ancestorStack.length);
     } else if (name === 'Itemlist') {

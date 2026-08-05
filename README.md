@@ -31,9 +31,13 @@ privaten Repos).
 4. "Exportieren" erzeugt eine aktualisierte X31-Datei zum Download, die wieder
    in ORCA AVA eingelesen werden kann.
 
-**Wichtige Einschränkung**: nur Positionen, die geprüft UND bereits in der
-importierten X31 als `<Item>` vorhanden sind, werden exportiert (Badge "nicht
-in X31" markiert Positionen ohne X31-Eintrag). Siehe `TODO.md` Punkt 2.
+**Export-Verhalten**: alle geprüften Positionen werden exportiert. Hat eine
+Position bereits einen X31-Eintrag, wird ihr Wert gepatcht; hat sie noch
+keinen (Badge "neu in X31" — normal, da ORCA nur begonnene Mengenermittlungen
+exportiert), wird beim Export ein neuer `<Item>`-Knoten samt ggf. fehlender
+Vorfahren-Kategorien in die X31 eingefügt. Der Insert-Pfad ist strukturell
+unverifiziert (siehe `TODO.md` Punkt 2) — Export-Toast weist neu eingefügte
+Positionen separat aus.
 
 **Exportformat vorläufig**: das REB-23.003-Zeilenformat für Mengenwerte wurde
 noch nicht gegen eine echte, in ORCA AVA befüllte X31-Datei verifiziert (die

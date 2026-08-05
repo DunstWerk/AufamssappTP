@@ -71,7 +71,12 @@ export function parseLv(text) {
       const id = itemEl.getAttribute('ID');
       const rNoPart = itemEl.getAttribute('RNoPart') || '';
       const indexAttr = itemEl.getAttribute('Index') || '';
-      const positionNumber = buildPositionNumber(ancestorStack, rNoPart, bkdnLevels, indexAttr);
+      const positionNumber = buildPositionNumber(
+        ancestorStack.map((a) => a.rNoPart),
+        rNoPart,
+        bkdnLevels,
+        indexAttr
+      );
       const { kurztext, langtext } = extractItemTexts(itemEl);
       const qtyText = firstDirectChild(itemEl, 'Qty')?.textContent.trim();
       const quText = firstDirectChild(itemEl, 'QU')?.textContent.trim();
@@ -81,8 +86,11 @@ export function parseLv(text) {
       const entry = {
         type: 'item',
         id,
+        rNoPart,
+        indexSuffix: indexAttr,
         level: ancestorStack.length,
         positionNumber,
+        ancestorPath: ancestorStack.map((a) => ({ id: a.id, rNoPart: a.rNoPart, label: a.label })),
         kurztext,
         langtext,
         qty: qtyText !== undefined && qtyText !== '' ? parseFloat(qtyText) : null,

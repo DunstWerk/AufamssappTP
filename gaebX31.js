@@ -15,6 +15,14 @@ import {
   firstDirectChild,
 } from './gaebCommon.js';
 
+function escapeXml(str) {
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
 /**
  * Erkennt den Inhalt eines <QTakeoff Row="..."> Attributwerts.
  * Erkennt sicher NUR zwei Muster:
@@ -48,7 +56,7 @@ function findBoQEl(doc) {
  * @returns {{ x31Phase:string, itemsById: Map<string, {
  *   rawRow: string|null, existingQty: number|null, formelKind: string,
  *   isRecognizedFormat: boolean, multiRowWarning: boolean, hasQDetermItem: boolean
- * }> }}
+ * }>, categoryIdsPresent: Set<string> }}
  */
 export function parseX31(text) {
   const doc = parseGaebXml(text);
@@ -61,7 +69,11 @@ export function parseX31(text) {
   if (!bodyEl) throw new Error('Kein <BoQBody> in der X31-Datei gefunden.');
 
   const itemsById = new Map();
+  const categoryIdsPresent = new Set();
   walkBoQBody(bodyEl, {
+    onCategoryEnter(category) {
+      categoryIdsPresent.add(category.id);
+    },
     onItem(itemEl) {
       const id = itemEl.getAttribute('ID');
       const qDetermItems = itemEl.getElementsByTagName('QDetermItem');
@@ -87,7 +99,7 @@ export function parseX31(text) {
     },
   });
 
-  return { x31Phase, itemsById };
+  return { x31Phase, itemsById, categoryIdsPresent };
 }
 
 /**
@@ -178,22 +190,245 @@ function escapeRegExp(str) {
 }
 
 /**
- * Chirurgischer Export: patcht NUR die Row-Attributwerte der tatsächlich
- * geänderten Positionen im original importierten X31-Rohtext. Alle anderen
- * Bytes bleiben unverändert — kein DOMParser/XMLSerializer-Rückweg.
+ * Findet zu einem öffnenden Tag (Position von "<tagName" im Text) die Position
+ * des ZUGEHÖRIGEN schließenden Tags ("</tagName>"), auch wenn gleichnamige Tags
+ * dazwischen verschachtelt sind (balanced-tag scan). Beschränkt auf die drei
+ * bekannten, nie selbstschließenden Container-Tags BoQCtgy/BoQBody/Itemlist —
+ * kein allgemeiner XML-Parser, sondern ein bewusst enges Hilfsmittel für den
+ * Export-Insert-Pfad.
+ */
+function findMatchingClose(text, tagName, openTagStart) {
+  const openNeedle = `<${tagName}`;
+  if (text.slice(openTagStart, openTagStart + openNeedle.length) !== openNeedle) {
+    throw new Error(`findMatchingClose: an Position ${openTagStart} beginnt kein <${tagName}>`);
+  }
+  const closeNeedle = `</${tagName}>`;
+  const firstTagEnd = text.indexOf('>', openTagStart);
+  if (firstTagEnd === -1) throw new Error(`Unvollständiges <${tagName}>-Tag im X31-Text.`);
+  let depth = 1;
+  let pos = firstTagEnd + 1;
+  while (depth > 0) {
+    const nextOpen = text.indexOf(openNeedle, pos);
+    const nextClose = text.indexOf(closeNeedle, pos);
+    if (nextClose === -1) {
+      throw new Error(`Kein schließendes </${tagName}> gefunden (Tiefe ${depth}).`);
+    }
+    if (nextOpen !== -1 && nextOpen < nextClose) {
+      const afterChar = text[nextOpen + openNeedle.length];
+      if (afterChar === ' ' || afterChar === '>' || afterChar === '\t' || afterChar === '\n') {
+        depth++;
+      }
+      pos = nextOpen + openNeedle.length;
+      continue;
+    }
+    depth--;
+    if (depth === 0) return nextClose;
+    pos = nextClose + closeNeedle.length;
+  }
+}
+
+function findCategoryOpenTag(rawText, catId) {
+  const idx = rawText.indexOf(`<BoQCtgy ID="${catId}"`);
+  if (idx === -1) throw new Error(`Kategorie mit ID "${catId}" nicht im X31-Text gefunden.`);
+  return idx;
+}
+
+function findDirectBoQBodySpan(rawText, containerOpenTagStart, containerTagName) {
+  const containerCloseIdx = findMatchingClose(rawText, containerTagName, containerOpenTagStart);
+  const boqBodyOpenIdx = rawText.indexOf('<BoQBody>', containerOpenTagStart);
+  if (boqBodyOpenIdx === -1 || boqBodyOpenIdx > containerCloseIdx) {
+    throw new Error(`Kein direktes <BoQBody> innerhalb von <${containerTagName}> gefunden — Struktur weicht von der erwarteten Form ab, Einfügen abgebrochen.`);
+  }
+  const boqBodyCloseIdx = findMatchingClose(rawText, 'BoQBody', boqBodyOpenIdx);
+  return { openIdx: boqBodyOpenIdx, closeIdx: boqBodyCloseIdx };
+}
+
+function findRootBoQBodySpan(rawText) {
+  const boqOpenIdx = rawText.indexOf('<BoQ ');
+  if (boqOpenIdx === -1) throw new Error('Kein <BoQ>-Element im X31-Text gefunden.');
+  return findDirectBoQBodySpan(rawText, boqOpenIdx, 'BoQ');
+}
+
+/**
+ * Sucht innerhalb eines BoQBody-Spans nach einem DIREKTEN <Itemlist>-Kind.
+ * Sicherheitsnetz gegen die (laut bisherigen Beispieldateien nicht auftretende)
+ * Mehrdeutigkeit, dass eine verschachtelte Unterkategorie vor der eigenen
+ * Itemlist im Text steht: wird ein <BoQCtgy> VOR der gefundenen <Itemlist>
+ * innerhalb desselben Spans entdeckt, wird sicherheitshalber abgebrochen statt
+ * an der falschen Stelle einzufügen.
+ */
+function findDirectItemlistSpan(rawText, boqBodySpan) {
+  const itemlistIdx = rawText.indexOf('<Itemlist>', boqBodySpan.openIdx);
+  if (itemlistIdx === -1 || itemlistIdx > boqBodySpan.closeIdx) return null;
+  const nestedCtgyIdx = rawText.indexOf('<BoQCtgy', boqBodySpan.openIdx);
+  if (nestedCtgyIdx !== -1 && nestedCtgyIdx < itemlistIdx) {
+    throw new Error('Mehrdeutige Struktur (Unterkategorie vor Itemlist) — automatisches Einfügen an dieser Stelle abgebrochen.');
+  }
+  const closeIdx = findMatchingClose(rawText, 'Itemlist', itemlistIdx);
+  return { openIdx: itemlistIdx, closeIdx };
+}
+
+function formatQty3(value) {
+  return value.toFixed(3);
+}
+
+/**
+ * Klont die Feldbreiten eines vorhandenen "blank-skeleton"-Rows und ersetzt
+ * Wert- und Referenzfeld. Für Positionen OHNE eigenen Vorlage-Row (Insert-Pfad),
+ * siehe Modul-Kommentar zu REB_FORMAT_VALIDATED — genauso unverifiziert wie der
+ * Patch-Pfad, hier zusätzlich auch der Referenzteil frei erfunden (fortlaufende
+ * Nummer, siehe nextSyntheticRefCode), nicht aus der Position selbst abgeleitet,
+ * da sich empirisch zeigte, dass der Referenzcode in den vorhandenen Zeilen NICHT
+ * mit der LV-Item-/Index-Nummer übereinstimmt, sondern eher eine fortlaufende
+ * Zeilennummer des Mengenermittlungsblatts ist.
+ */
+function buildSyntheticRow(effectiveQty, templateRow, refCode) {
+  const valueStr = formatQty3(effectiveQty);
+  if (!templateRow) return `${valueStr}=`;
+  const m = templateRow.match(/^(\s*)(\d+)(\s*=\s*)(\d{4}[A-Za-z]\d)(\s*)$/);
+  if (!m) return `${valueStr}=`;
+  const [, leadSpace, numField, midSep, refField, trailSpace] = m;
+  const fieldWidth = leadSpace.length + numField.length;
+  const newNumField = valueStr.padStart(fieldWidth, ' ').slice(-Math.max(fieldWidth, valueStr.length));
+  const newRefField = refCode.padStart(refField.length, '0').slice(-Math.max(refField.length, refCode.length));
+  return newNumField + midSep + newRefField + trailSpace;
+}
+
+/**
+ * Findet ein beliebiges vorhandenes 'blank-skeleton'-Row als Breiten-Vorlage
+ * und die höchste bereits verwendete 4-stellige Referenznummer (für neue,
+ * fortlaufend nummerierte Zeilen — siehe buildSyntheticRow-Kommentar).
+ */
+function findRowTemplateAndNextRefCode(x31ItemsById) {
+  let templateRow = null;
+  let maxRef = 0;
+  for (const entry of x31ItemsById.values()) {
+    if (!entry.rawRow) continue;
+    if (!templateRow && entry.formelKind === 'blank-skeleton') templateRow = entry.rawRow;
+    const m = entry.rawRow.match(/(\d{4})[A-Za-z]\d\s*$/);
+    if (m) maxRef = Math.max(maxRef, parseInt(m[1], 10));
+  }
+  return { templateRow, nextRefCode: maxRef + 10 };
+}
+
+function buildItemFragment(pos, row) {
+  return (
+    `<Item ID="${escapeXml(pos.id)}" RNoPart="${escapeXml(pos.rNoPart)}">` +
+    `<QtyDeterm><QDetermItem>` +
+    `<CtlgAssign><CtlgID>idDIN276-08</CtlgID><CtlgCode/></CtlgAssign>` +
+    `<QTakeoff Row="${escapeXml(row)}"/>` +
+    `</QDetermItem></QtyDeterm></Item>`
+  );
+}
+
+function buildCategoryChainFragment(missingLevels, itemFragmentXml) {
+  let inner = `<Itemlist>${itemFragmentXml}</Itemlist>`;
+  for (let i = missingLevels.length - 1; i >= 0; i--) {
+    const lvl = missingLevels[i];
+    inner =
+      `<BoQCtgy ID="${escapeXml(lvl.id)}" RNoPart="${escapeXml(lvl.rNoPart)}">` +
+      `<LblTx><p><span>${escapeXml(lvl.label)}</span></p></LblTx>` +
+      `<BoQBody>${inner}</BoQBody></BoQCtgy>`;
+  }
+  return inner;
+}
+
+/**
+ * Ermittelt für eine Position ohne vorhandenen X31-Eintrag, WO im Rohtext das
+ * neue `<Item>` (und ggf. fehlende Vorfahren-Kategorien) eingefügt werden muss.
+ * Wirft eine aussagekräftige Exception statt zu raten, wenn die Struktur nicht
+ * eindeutig genug ist (siehe findDirectItemlistSpan) — der Aufrufer lässt diese
+ * eine Position dann bewusst aus dem Export aus, statt riskant zu patchen.
+ */
+function planInsertion(rawText, pos, categoryIdsPresent) {
+  const ancestorPath = pos.ancestorPath || [];
+  let matchedDepth = 0;
+  for (const anc of ancestorPath) {
+    if (categoryIdsPresent.has(anc.id)) matchedDepth++;
+    else break;
+  }
+  const missing = ancestorPath.slice(matchedDepth);
+
+  if (missing.length === 0) {
+    // Gesamte Ahnenkette (falls vorhanden) existiert schon — nur ein <Item> in
+    // die bestehende oder eine neu anzulegende <Itemlist> einfügen.
+    const containerSpan =
+      matchedDepth === 0
+        ? findRootBoQBodySpan(rawText)
+        : findDirectBoQBodySpan(rawText, findCategoryOpenTag(rawText, ancestorPath[matchedDepth - 1].id), 'BoQCtgy');
+    const itemlistSpan = findDirectItemlistSpan(rawText, containerSpan);
+    return { itemlistSpan, containerSpan, missing: [] };
+  }
+
+  // Ab `matchedDepth` fehlt die Kette — als ein Fragment ans Ende des zuletzt
+  // gefundenen Containers (oder Wurzel-BoQBody) anhängen.
+  const containerSpan =
+    matchedDepth === 0
+      ? findRootBoQBodySpan(rawText)
+      : findDirectBoQBodySpan(rawText, findCategoryOpenTag(rawText, ancestorPath[matchedDepth - 1].id), 'BoQCtgy');
+  return { itemlistSpan: null, containerSpan, missing };
+}
+
+/**
+ * Chirurgischer Export: patcht bestehende Row-Attributwerte UND fügt bei Bedarf
+ * neue `<Item>`-Knoten (ggf. mit fehlenden Vorfahren-Kategorien) ein — für
+ * Positionen, die geprüft/gemessen wurden, aber noch keinen X31-Eintrag hatten
+ * (siehe Kontext: ORCA exportiert nur Positionen mit bereits begonnener
+ * Mengenermittlung). Alle unberührten Bytes bleiben exakt erhalten — kein
+ * DOMParser/XMLSerializer-Rückweg für das Gesamtdokument, nur die jeweils neu
+ * erzeugten Fragmente werden als Text gespleißt.
  *
  * @param {string} originalRawText - unveränderter Text der importierten X31
- * @param {Array<{id:string, effectiveQty:number, origRawRow:string|null, multiRowWarning:boolean}>} touchedPositions
- * @returns {{ patchedText:string, changedCount:number }}
+ * @param {Array<{id:string, effectiveQty:number, multiRowWarning:boolean,
+ *   origRawRow:string|null, rNoPart?:string, ancestorPath?:Array}>} positions
+ *   origRawRow === null bedeutet: kein vorhandener Eintrag -> Insert-Pfad,
+ *   dafür müssen rNoPart und ancestorPath gesetzt sein.
+ * @param {{ itemsById: Map, categoryIdsPresent: Set<string> }} x31ParseResult
+ * @returns {{ patchedText:string, updatedCount:number, insertedCount:number, skipped: Array<{id:string, reason:string}> }}
  */
-export function patchX31(originalRawText, touchedPositions) {
-  const patches = touchedPositions.map((pos) => {
-    const { start, end } = locateRowAttributeOffsets(originalRawText, pos.id, {
-      useLastQTakeoff: pos.multiRowWarning,
-    });
-    const replacement = encodeFormel91(pos.effectiveQty, pos.origRawRow);
-    return { start, end, replacement };
-  });
+export function patchX31(originalRawText, positions, x31ParseResult) {
+  const patches = [];
+  const skipped = [];
+  let updatedCount = 0;
+  let insertedCount = 0;
+  let nextRefCode = null;
+  let templateRow = null;
+
+  for (const pos of positions) {
+    try {
+      if (pos.origRawRow != null) {
+        const { start, end } = locateRowAttributeOffsets(originalRawText, pos.id, {
+          useLastQTakeoff: pos.multiRowWarning,
+        });
+        patches.push({ start, end, replacement: encodeFormel91(pos.effectiveQty, pos.origRawRow) });
+        updatedCount++;
+      } else {
+        if (nextRefCode === null) {
+          const found = findRowTemplateAndNextRefCode(x31ParseResult.itemsById);
+          templateRow = found.templateRow;
+          nextRefCode = found.nextRefCode;
+        }
+        const plan = planInsertion(originalRawText, pos, x31ParseResult.categoryIdsPresent);
+        const refCode = String(nextRefCode).padStart(4, '0') + 'A0';
+        const row = buildSyntheticRow(pos.effectiveQty, templateRow, refCode);
+        const itemXml = buildItemFragment(pos, row);
+
+        if (plan.missing.length === 0 && plan.itemlistSpan) {
+          patches.push({ start: plan.itemlistSpan.closeIdx, end: plan.itemlistSpan.closeIdx, replacement: itemXml });
+        } else if (plan.missing.length === 0) {
+          const wrapped = `<Itemlist>${itemXml}</Itemlist>`;
+          patches.push({ start: plan.containerSpan.closeIdx, end: plan.containerSpan.closeIdx, replacement: wrapped });
+        } else {
+          const fragment = buildCategoryChainFragment(plan.missing, itemXml);
+          patches.push({ start: plan.containerSpan.closeIdx, end: plan.containerSpan.closeIdx, replacement: fragment });
+        }
+        nextRefCode += 10;
+        insertedCount++;
+      }
+    } catch (err) {
+      skipped.push({ id: pos.id, reason: err.message });
+    }
+  }
 
   // Von hinten nach vorne anwenden, damit vorher berechnete Offsets gültig bleiben.
   patches.sort((a, b) => b.start - a.start);
@@ -202,11 +437,11 @@ export function patchX31(originalRawText, touchedPositions) {
     text = text.slice(0, start) + replacement + text.slice(end);
   }
 
-  // Sicherheitscheck: gepatchter Text muss weiterhin gültiges XML sein.
+  // Sicherheitscheck: gepatchter/erweiterter Text muss weiterhin gültiges XML sein.
   const verifyDoc = new DOMParser().parseFromString(text, 'application/xml');
   if (verifyDoc.getElementsByTagName('parsererror').length) {
-    throw new Error('Export abgebrochen: gepatchte X31-Datei ist kein gültiges XML mehr (interner Fehler beim Patchen).');
+    throw new Error('Export abgebrochen: gepatchte X31-Datei ist kein gültiges XML mehr (interner Fehler beim Patchen/Einfügen).');
   }
 
-  return { patchedText: text, changedCount: patches.length };
+  return { patchedText: text, updatedCount, insertedCount, skipped };
 }

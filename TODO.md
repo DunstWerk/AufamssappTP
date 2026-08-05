@@ -25,15 +25,34 @@ eingetragenen Menge vorliegt:**
 5. Eine Regressions-Fixture (leer + befüllt) unter `test/fixtures/` ablegen
    und einen Test ergänzen, der `encodeFormel91`/`parseFormel91` dagegen prüft.
 
-## 2. Positionen ohne X31-Eintrag
+## 2. Positionen ohne X31-Eintrag (gelöst — Struktur-Einfügung)
 
-Die mitgelieferte Beispiel-X31 deckt nur 17 von 105 LV-Positionen ab (kein
-1:1-Abbild des LVs). Solche Positionen sind in der App normal bearbeitbar,
-werden aber beim Export übersprungen (Badge "nicht in X31", Banner-Hinweis,
-Export-Toast nennt die Anzahl). Falls ORCA AVA tatsächlich immer eine
-vollständige X31 liefert und die Beispieldatei nur ein Sonderfall war, bitte
-Rückmeldung geben — dann könnte diese Beschränkung ggf. entfallen bzw.
-anders bewertet werden.
+Geklärt: die mitgelieferte Beispiel-X31 deckt nur 17 von 105 LV-Positionen ab,
+weil ORCA in der X31 grundsätzlich nur Positionen exportiert, für die bereits
+eine Mengenermittlung begonnen wurde — kein Datenfehler. Auf Nutzerwunsch
+werden geprüfte/gemessene Positionen OHNE vorhandenen X31-Eintrag beim Export
+jetzt als neue `<Item>`-Knoten (und nötigenfalls fehlende Vorfahren-Kategorien)
+in die X31 eingefügt, statt ausgeschlossen zu werden (siehe `gaebX31.js`,
+`planInsertion`/`patchX31`, Pfad B).
+
+**Zusätzliches Risiko dieses Insert-Pfads** (oben auf Punkt 1 aufbauend):
+- Der REB-23.003-Row-Wert für neu eingefügte Zeilen wird komplett neu erzeugt
+  (keine Vorlage-Zeile für diese Position vorhanden), inklusive eines frei
+  erfundenen, fortlaufenden Referenzcodes (`nextRefCode`, Format `NNNNA0`).
+  Empirisch zeigte sich, dass dieser Referenzteil in den vorhandenen Zeilen
+  NICHT mit der LV-Item-/Index-Nummer übereinstimmt (vermutlich eine
+  fortlaufende Zeilennummer des Mengenermittlungsblatts) — die fortlaufende
+  Nummerierung ist ein Rateversuch, keine gesicherte Ableitung.
+- Neu eingefügte `<BoQCtgy>`-Knoten übernehmen ID/RNoPart/Label 1:1 aus dem LV
+  (verifiziert: Kategorie-IDs sind zwischen LV und X31 identisch), das ist der
+  sicherste Teil dieser Erweiterung.
+- Jede neu eingefügte Position wird defensiv abgesichert: kann die Einfüge-
+  stelle nicht eindeutig bestimmt werden (siehe `findDirectItemlistSpan` in
+  `gaebX31.js`), wird NICHT geraten — die Position landet in `skipped` und
+  fehlt sichtbar im Export-Toast, statt riskant falsch eingefügt zu werden.
+- **Sobald die Testdatei aus Punkt 1 vorliegt**: falls sie auch eine Position
+  ohne vorherigen X31-Eintrag enthält, unbedingt zusätzlich den Insert-Pfad
+  damit verifizieren (nicht nur den Patch-Pfad).
 
 ## 3. Echtes iPad/Safari nicht getestet
 
