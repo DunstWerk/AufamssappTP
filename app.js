@@ -255,6 +255,7 @@ function wireListScreen() {
   });
 
   document.getElementById('btn-export').addEventListener('click', handleExport);
+  document.getElementById('btn-export-excel').addEventListener('click', handleExcelExport);
   document.getElementById('btn-reimport').addEventListener('click', () => {
     showImportScreen();
     wireImportScreen();
@@ -646,8 +647,8 @@ function buildExportFilename() {
   return `${base}_Aufmass_${date}.X31`;
 }
 
-function downloadText(text, filename) {
-  const blob = new Blob([text], { type: 'application/xml' });
+function downloadText(text, filename, mimeType) {
+  const blob = new Blob([text], { type: mimeType || 'application/xml' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
@@ -656,6 +657,76 @@ function downloadText(text, filename) {
   a.click();
   a.remove();
   setTimeout(() => URL.revokeObjectURL(url), 5000);
+}
+
+// ---------------------------------------------------------------------------
+// Excel-Sicherung (CSV, Excel-kompatibel) — reine Zusatzsicherung der
+// erfassten Aufmaßdaten, damit sie notfalls von Hand in ORCA nachgetragen
+// werden können. Kein Rückimport-Format, nur zum Lesen/Abtippen gedacht.
+// ---------------------------------------------------------------------------
+function csvEscape(value) {
+  const str = value === null || value === undefined ? '' : String(value);
+  if (/[";\n\r]/.test(str)) {
+    return '"' + str.replace(/"/g, '""') + '"';
+  }
+  return str;
+}
+
+function formatCsvNumber(value) {
+  if (value === null || value === undefined || Number.isNaN(value)) return '';
+  // Deutsches Zahlenformat (Komma als Dezimaltrennzeichen), da das CSV mit
+  // Semikolon-Trennzeichen für deutsches Excel gedacht ist.
+  return String(value).replace('.', ',');
+}
+
+function handleExcelExport() {
+  try {
+    const header = [
+      'Positionsnummer',
+      'Kategorie',
+      'Kurztext',
+      'Einheit',
+      'Soll-Menge',
+      'Geprüft',
+      'Erfasste Menge',
+      'Klassifikation',
+      'Abrechnungsmenge',
+      'Bemerkung',
+    ];
+    const rows = [header];
+
+    for (const entry of lvParseResult.flatRenderList) {
+      if (entry.type !== 'item') continue;
+      const rec = positionsById.get(entry.id) || defaultRecord(entry);
+      const effectiveQty = round2((rec.menge || 0) * FAKTOR[rec.klassifikation]);
+      const kategorie = (entry.ancestorPath || []).map((a) => a.label).filter(Boolean).join(' / ');
+      rows.push([
+        entry.positionNumber,
+        kategorie,
+        entry.kurztext,
+        entry.qu,
+        formatCsvNumber(entry.qty),
+        rec.geprueft ? 'Ja' : 'Nein',
+        formatCsvNumber(rec.menge),
+        rec.klassifikation === 'geliefert' ? 'Geliefert (×0,8)' : 'Montiert (×1,0)',
+        formatCsvNumber(effectiveQty),
+        rec.bemerkung || '',
+      ]);
+    }
+
+    const csvText = rows.map((row) => row.map(csvEscape).join(';')).join('\r\n');
+    // BOM voranstellen, damit Excel Umlaute korrekt als UTF-8 erkennt.
+    const withBom = '﻿' + csvText;
+
+    const base = document.getElementById('project-title').textContent.replace(/\.[^.]+$/, '') || 'Aufmass';
+    const date = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+    downloadText(withBom, `${base}_Aufmass_${date}.csv`, 'text/csv;charset=utf-8');
+
+    showToast(`Excel-Sicherung erstellt: ${rows.length - 1} Position(en).`, false);
+  } catch (err) {
+    console.error(err);
+    showToast('Excel-Sicherung fehlgeschlagen: ' + err.message, true);
+  }
 }
 
 // ---------------------------------------------------------------------------

@@ -30,6 +30,12 @@ privaten Repos).
    nach Reload/Offline/Neustart bleibt der Stand erhalten, ohne erneuten Import.
 4. "Exportieren" erzeugt eine aktualisierte X31-Datei zum Download, die wieder
    in ORCA AVA eingelesen werden kann.
+5. "Excel-Sicherung" erzeugt zusätzlich eine CSV-Datei (öffnet direkt in Excel,
+   deutsches Format: Semikolon-getrennt, Komma als Dezimaltrennzeichen, UTF-8
+   mit BOM) mit allen Positionen (Soll, erfasste Menge, Klassifikation,
+   Abrechnungsmenge, Geprüft-Status, Bemerkung) — als Sicherheitskopie der
+   Aufmaßdaten, falls sie z.B. bei Problemen mit dem X31-Reimport von Hand in
+   ORCA nachgetragen werden müssen. Kein Rückimport-Format, nur zum Lesen.
 
 **Export-Verhalten**: alle geprüften Positionen werden exportiert. Hat eine
 Position bereits einen X31-Eintrag, wird ihr Wert gepatcht; hat sie noch
