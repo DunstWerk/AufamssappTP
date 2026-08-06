@@ -149,10 +149,20 @@ def byte_level_check(orig_text, exported_text, changed_ids, inserted_ids, orig_r
 
     # Für jede eingefügte ID: Span im EXPORT bestimmen und als "hier wurde beim
     # Original nichts entfernt, im Export aber etwas hinzugefügt" behandeln.
-    inserted_spans_export = sorted(
-        (find_inserted_span(exported_text, orig_root, exported_root, iid) for iid in inserted_ids),
-        key=lambda s: s[0],
+    # Mehrere IDs können denselben neu eingefügten Teilbaum teilen (z.B. zwei
+    # neue Positionen unter derselben neu angelegten Kategorie) -> identische
+    # oder ineinander verschachtelte Spans zu einer zusammenfassen, sonst
+    # würde derselbe Textbereich mehrfach "verbraucht".
+    raw_spans = sorted(
+        {find_inserted_span(exported_text, orig_root, exported_root, iid) for iid in inserted_ids}
     ) if inserted_ids else []
+    inserted_spans_export = []
+    for start, end in raw_spans:
+        if inserted_spans_export and start < inserted_spans_export[-1][1]:
+            prev_start, prev_end = inserted_spans_export[-1]
+            inserted_spans_export[-1] = (prev_start, max(prev_end, end))
+        else:
+            inserted_spans_export.append((start, end))
 
     excluded_orig.sort()
     cursor_orig = 0

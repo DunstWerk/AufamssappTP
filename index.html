@@ -108,6 +108,24 @@
   </div>
 </dialog>
 
+<!-- ============ Export-Warnung (unverifiziertes Rechenansatz-Format) ============ -->
+<dialog id="export-warning-dialog">
+  <h2>Export-Format noch nicht bestätigt</h2>
+  <p>
+    ORCA AVA hat exportierte Rechenansätze aus dieser App bereits als ungültig
+    zurückgewiesen (rotes Kreuz, falsche Faktor-/Ergebnis-Werte). Das
+    Zahlenformat für die Mengenermittlung ist noch nicht korrekt nachgebildet.
+  </p>
+  <p>
+    Bitte den Import in ORCA AVA nach dem Export sorgfältig prüfen, oder
+    stattdessen die "Excel-Sicherung" zur manuellen Eingabe verwenden.
+  </p>
+  <div class="dialog-actions">
+    <button id="export-warning-cancel" class="btn">Abbrechen</button>
+    <button id="export-warning-proceed" class="btn btn-primary">Trotzdem exportieren</button>
+  </div>
+</dialog>
+
 <script type="module" src="app.js"></script>
 </body>
 </html>

@@ -38,9 +38,11 @@ try {
   await page.locator('.row-item[data-id="id75"] .inp-menge').fill('3');
   await page.locator('.row-item[data-id="id80"] .inp-menge').fill('4');
 
+  await page.click('#btn-export');
+  await page.waitForSelector('#export-warning-dialog[open]');
   const [download] = await Promise.all([
     page.waitForEvent('download'),
-    page.click('#btn-export'),
+    page.click('#export-warning-proceed'),
   ]);
   const exportedPath = path.join(os.tmpdir(), 'exported-aufmass-insert.X31');
   await download.saveAs(exportedPath);

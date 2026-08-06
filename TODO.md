@@ -1,29 +1,62 @@
 # Offene Punkte
 
-## 1. REB-23.003-Exportformat noch nicht verifiziert (wichtigster Punkt)
+## 1. REB-23.003-Exportformat BESTÄTIGT FALSCH — von ORCA zurückgewiesen (wichtigster Punkt)
 
 `gaebX31.js` exportiert Mengen aktuell nach bestem Wissen als "Formel 91"
 (freie Formel, `<Zahl>=`), eingebettet in die exakte Feldbreite des
-ursprünglichen Platzhalter-Musters. **Das wurde noch nicht gegen eine echte,
-in ORCA AVA befüllte X31-Datei verifiziert** — die mitgelieferte
-Beispieldatei (`test/fixtures/Aufmass_Goettingen.X31`) enthält nur leere
-Formular-Platzhalter, keine echten Messwerte.
+ursprünglichen Platzhalter-Musters. **Das ist inzwischen nachweislich falsch**:
+der Nutzer hat eine exportierte X31 real in ORCA AVA importiert, und ORCA hat
+den erzeugten Rechenansatz mit rotem Kreuz als ungültig markiert.
 
-`REB_FORMAT_VALIDATED = false` in `gaebX31.js` steuert einen Warnhinweis, der
-bei jedem Export angezeigt wird.
+Konkreter Befund aus ORCAs Rechenansatz-Grid (Spalten Faktor / Rechenansatz /
+Ergebnis / Seite / Zeile / Inde):
+- **Unsere Zeile (falsch)**: Faktor `0,001`, Rechenansatz `A0 =;;;;` (unsinnig),
+  Ergebnis `0,000`, Zeile `T`.
+- **Eine echte, von Hand in ORCA eingetragene Zeile (richtig, Position
+  05.02.001)**: Faktor `1,000`, Rechenansatz `17=`, Ergebnis `17,000`, Zeile `A`.
 
-**Sobald eine X31-Datei mit mindestens einer manuell in ORCA AVA
-eingetragenen Menge vorliegt:**
-1. `node tools/reb23003-diff.mjs <leere.X31> <befüllte.X31>` ausführen.
-2. Anhand der Zeichen-für-Zeichen-Diff-Ausgabe das tatsächliche Spaltenformat
-   ermitteln (Spaltenbreite, Padding, Dezimaltrennzeichen, Position des
-   Formel-Codes).
-3. `encodeFormel91()` und `parseFormel91()` in `gaebX31.js` entsprechend
-   anpassen.
-4. `REB_FORMAT_VALIDATED = true` setzen, Warnhinweis in `app.js`
-   (`handleExport`) entfernen.
-5. Eine Regressions-Fixture (leer + befüllt) unter `test/fixtures/` ablegen
-   und einen Test ergänzen, der `encodeFormel91`/`parseFormel91` dagegen prüft.
+Das zeigt: das `Row`-Attribut kodiert intern MEHRERE getrennte ORCA-Felder
+(Faktor, Rechenansatz, Ergebnis, Seite, Zeile, Inde, ggf. mehr) in einer
+gepackten Struktur, die deutlich komplexer ist als die bisher angenommene
+"Zahl = Referenzcode"-Form. Unser einfaches Ersetzen des führenden
+Zahlenblocks verschiebt/zerstört mehrere dieser Felder gleichzeitig.
+
+**Bereits behobener Teilbug, unabhängig vom Zeilenformat**: wenn mehrere neu
+eingefügte Positionen dieselbe, in der X31 fehlende Vorfahren-Kategorie
+teilen, wurde diese Kategorie doppelt angelegt (zwei `<BoQCtgy>` mit
+identischer ID) — das war beim ORCA-Import zwar (laut Nutzer) noch les- und
+zuordenbar, ist aber ungültige GAEB-Struktur. Gefixt in `groupInsertPositions`
+(gaebX31.js): Positionen mit identischer fehlender Kette werden jetzt korrekt
+zu einer Gruppe zusammengefasst, die die Kategorie nur einmal anlegt.
+Regressionstest: `test/scenarios/05c-export-insert-shared-category.mjs`.
+
+**Noch offen — der eigentliche Zeilenformat-Fehler.** Der vom Nutzer als
+"von ORCA" bezeichnete zweite Vergleichsfile enthielt (geprüft) tatsächlich
+NICHT die 05.02.001/`17=`-Beispielzeile, sondern war byte-identisch mit dem
+ursprünglichen leeren Beispiel — vermutlich ein Missverständnis, welche Datei
+gemeint war. Für eine echte Byte-Diff-Analyse fehlt weiterhin die tatsächliche
+Export-Datei mit der befüllten Zeile.
+
+**Präzise benötigt, um das endlich richtig zu lösen** (bitte genau so, nicht
+nur einen Screenshot):
+1. In ORCA AVA die ORIGINAL-X31 (unverändert, leeres Formular) öffnen.
+2. Für EINE Position von Hand einen Rechenansatz eintragen (z.B. `17=`, wie im
+   Screenshot gezeigt) und NUR das speichern/exportieren — keine anderen
+   Änderungen.
+3. Diese exportierte X31-Datei hier hochladen (die Datei selbst, nicht nur
+   ein Screenshot des ORCA-Grids).
+4. Mit `node tools/reb23003-diff.mjs <Original-X31> <von-Hand-befuellte-X31>`
+   Zeichen-für-Zeichen vergleichen, das tatsächliche Format ermitteln,
+   `encodeFormel91()`/`parseFormel91()` entsprechend neu schreiben (die
+   gepackte Mehrfeld-Struktur berücksichtigen, nicht nur einen einzelnen
+   Zahlenblock), `REB_FORMAT_VALIDATED = true` setzen, Warn-Dialog in
+   `app.js` entfernen, Regressions-Fixture ergänzen.
+
+**Bis dahin**: die App zeigt vor jedem X31-Export einen Bestätigungsdialog
+("Export-Format noch nicht bestätigt", siehe `index.html`/`app.js`
+`confirmExportWarning`), der ausdrücklich auf die bestätigte ORCA-Ablehnung
+hinweist und Abbrechen anbietet. Die Excel-Sicherung bleibt der verlässliche
+Weg für die manuelle Eingabe in ORCA.
 
 ## 2. Positionen ohne X31-Eintrag (gelöst — Struktur-Einfügung)
 
@@ -35,14 +68,9 @@ jetzt als neue `<Item>`-Knoten (und nötigenfalls fehlende Vorfahren-Kategorien)
 in die X31 eingefügt, statt ausgeschlossen zu werden (siehe `gaebX31.js`,
 `planInsertion`/`patchX31`, Pfad B).
 
-**Zusätzliches Risiko dieses Insert-Pfads** (oben auf Punkt 1 aufbauend):
-- Der REB-23.003-Row-Wert für neu eingefügte Zeilen wird komplett neu erzeugt
-  (keine Vorlage-Zeile für diese Position vorhanden), inklusive eines frei
-  erfundenen, fortlaufenden Referenzcodes (`nextRefCode`, Format `NNNNA0`).
-  Empirisch zeigte sich, dass dieser Referenzteil in den vorhandenen Zeilen
-  NICHT mit der LV-Item-/Index-Nummer übereinstimmt (vermutlich eine
-  fortlaufende Zeilennummer des Mengenermittlungsblatts) — die fortlaufende
-  Nummerierung ist ein Rateversuch, keine gesicherte Ableitung.
+**Zusätzliches Risiko dieses Insert-Pfads** (siehe Punkt 1 — der Row-Wert ist
+für neu eingefügte Zeilen genauso betroffen wie für gepatchte, plus zusätzlich
+ein frei erfundener, fortlaufender Referenzcode ohne gesicherte Ableitung):
 - Neu eingefügte `<BoQCtgy>`-Knoten übernehmen ID/RNoPart/Label 1:1 aus dem LV
   (verifiziert: Kategorie-IDs sind zwischen LV und X31 identisch), das ist der
   sicherste Teil dieser Erweiterung.

@@ -263,6 +263,7 @@ function wireListScreen() {
   document.getElementById('reimport-ack').addEventListener('click', () => {
     document.getElementById('reimport-dialog').close();
   });
+  wireExportWarningDialog();
 
   const container = document.getElementById('list-container');
   container.addEventListener('click', onListClick);
@@ -587,7 +588,30 @@ function renderBanner() {
 // ---------------------------------------------------------------------------
 // Export
 // ---------------------------------------------------------------------------
+let pendingExportWarningResolve = null;
+function wireExportWarningDialog() {
+  document.getElementById('export-warning-cancel').addEventListener('click', () => {
+    document.getElementById('export-warning-dialog').close();
+    if (pendingExportWarningResolve) pendingExportWarningResolve(false);
+  });
+  document.getElementById('export-warning-proceed').addEventListener('click', () => {
+    document.getElementById('export-warning-dialog').close();
+    if (pendingExportWarningResolve) pendingExportWarningResolve(true);
+  });
+}
+
+function confirmExportWarning() {
+  if (REB_FORMAT_VALIDATED) return Promise.resolve(true);
+  return new Promise((resolve) => {
+    pendingExportWarningResolve = resolve;
+    document.getElementById('export-warning-dialog').showModal();
+  });
+}
+
 async function handleExport() {
+  const proceed = await confirmExportWarning();
+  if (!proceed) return;
+
   const btn = document.getElementById('btn-export');
   btn.disabled = true;
   try {

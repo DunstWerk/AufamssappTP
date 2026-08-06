@@ -334,39 +334,85 @@ function buildCategoryChainFragment(missingLevels, itemFragmentXml) {
 }
 
 /**
- * Ermittelt für eine Position ohne vorhandenen X31-Eintrag, WO im Rohtext das
- * neue `<Item>` (und ggf. fehlende Vorfahren-Kategorien) eingefügt werden muss.
- * Wirft eine aussagekräftige Exception statt zu raten, wenn die Struktur nicht
- * eindeutig genug ist (siehe findDirectItemlistSpan) — der Aufrufer lässt diese
- * eine Position dann bewusst aus dem Export aus, statt riskant zu patchen.
+ * Gruppiert Insert-Positionen nach ihrer tatsächlichen Einfügestelle (Anker-
+ * Kategorie + fehlende Ahnenkette), gegen die UNVERÄNDERTE, in der X31
+ * tatsächlich vorhandene Kategorie-Menge (nicht progressiv mutiert — siehe
+ * unten, warum das wichtig ist). Positionen mit identischer fehlender Kette
+ * (z.B. zwei neue Positionen unter derselben, in der X31 fehlenden
+ * Unterkategorie) bekommen denselben Gruppenschlüssel und landen automatisch
+ * in EINER gemeinsamen Gruppe, damit die fehlende Kategorie nur EINMAL neu
+ * angelegt wird. Das war ein realer, vom Nutzer beim ORCA-Reimport gefundener
+ * Bug: zwei Positionen unter derselben fehlenden Kategorie erzeugten zwei
+ * separate <BoQCtgy>-Knoten mit identischer ID, weil die vorherige Version
+ * die Kategorie nach der ERSTEN Position bereits als "vorhanden" markierte —
+ * wodurch die ZWEITE Position (mit exakt derselben Kette) einen anderen,
+ * flacheren Ankerpunkt berechnete, statt in dieselbe Gruppe zu fallen.
+ *
+ * Seltener, nicht vollständig gelöster Fall: zwei Positionen benötigen
+ * dieselbe fehlende Kategorie auf UNTERSCHIEDLICHER Tiefe (eine braucht nur
+ * [katX], eine andere [katX, katY]) — das ergibt zwei verschiedene Gruppen,
+ * die beide katX neu anlegen würden. Wird unten separat erkannt: alle bis auf
+ * die erste (kürzeste) betroffene Gruppe werden dann mit klarer Fehlermeldung
+ * übersprungen, statt eine doppelte Kategorie zu riskieren.
  */
-function planInsertion(rawText, pos, categoryIdsPresent) {
-  const ancestorPath = pos.ancestorPath || [];
-  let matchedDepth = 0;
-  for (const anc of ancestorPath) {
-    if (categoryIdsPresent.has(anc.id)) matchedDepth++;
-    else break;
-  }
-  const missing = ancestorPath.slice(matchedDepth);
+function groupInsertPositions(insertPositions, categoryIdsPresentOriginal) {
+  const groups = new Map();
 
-  if (missing.length === 0) {
-    // Gesamte Ahnenkette (falls vorhanden) existiert schon — nur ein <Item> in
-    // die bestehende oder eine neu anzulegende <Itemlist> einfügen.
-    const containerSpan =
-      matchedDepth === 0
-        ? findRootBoQBodySpan(rawText)
-        : findDirectBoQBodySpan(rawText, findCategoryOpenTag(rawText, ancestorPath[matchedDepth - 1].id), 'BoQCtgy');
+  for (const pos of insertPositions) {
+    const ancestorPath = pos.ancestorPath || [];
+    let matchedDepth = 0;
+    for (const anc of ancestorPath) {
+      if (categoryIdsPresentOriginal.has(anc.id)) matchedDepth++;
+      else break;
+    }
+    const missingLevels = ancestorPath.slice(matchedDepth);
+    const anchorId = matchedDepth === 0 ? null : ancestorPath[matchedDepth - 1].id;
+    const key = anchorId + '>' + missingLevels.map((l) => l.id).join('>');
+    if (!groups.has(key)) {
+      groups.set(key, { anchorId, missingLevels, items: [] });
+    }
+    groups.get(key).items.push(pos);
+  }
+
+  const sorted = [...groups.values()].sort((a, b) => a.missingLevels.length - b.missingLevels.length);
+
+  // Sicherheitsnetz gegen den selteneren Tiefen-Überschneidungsfall: sobald
+  // eine (kürzere) Gruppe eine Kategorie-ID neu anlegt, darf keine weitere
+  // Gruppe dieselbe ID ebenfalls neu anlegen wollen.
+  const claimedNewCategoryIds = new Set();
+  const safeGroups = [];
+  for (const group of sorted) {
+    const collision = group.missingLevels.find((lvl) => claimedNewCategoryIds.has(lvl.id));
+    if (collision) {
+      group.skipReason = `Kategorie "${collision.id}" wird bereits von einer anderen Position in diesem Export neu angelegt (mehrstufige Tiefen-Überschneidung, nicht unterstützt).`;
+      safeGroups.push(group);
+      continue;
+    }
+    for (const lvl of group.missingLevels) claimedNewCategoryIds.add(lvl.id);
+    safeGroups.push(group);
+  }
+  return safeGroups;
+}
+
+/**
+ * Ermittelt für eine Gruppe von Positionen ohne vorhandenen X31-Eintrag, WO im
+ * Rohtext die neuen `<Item>`-Knoten (und ggf. fehlende Vorfahren-Kategorien)
+ * eingefügt werden müssen. Wirft eine aussagekräftige Exception statt zu
+ * raten, wenn die Struktur nicht eindeutig genug ist (siehe
+ * findDirectItemlistSpan) — der Aufrufer lässt diese Gruppe dann bewusst aus
+ * dem Export aus, statt riskant zu patchen.
+ */
+function planInsertion(rawText, group) {
+  const containerSpan =
+    group.anchorId == null
+      ? findRootBoQBodySpan(rawText)
+      : findDirectBoQBodySpan(rawText, findCategoryOpenTag(rawText, group.anchorId), 'BoQCtgy');
+
+  if (group.missingLevels.length === 0) {
     const itemlistSpan = findDirectItemlistSpan(rawText, containerSpan);
     return { itemlistSpan, containerSpan, missing: [] };
   }
-
-  // Ab `matchedDepth` fehlt die Kette — als ein Fragment ans Ende des zuletzt
-  // gefundenen Containers (oder Wurzel-BoQBody) anhängen.
-  const containerSpan =
-    matchedDepth === 0
-      ? findRootBoQBodySpan(rawText)
-      : findDirectBoQBodySpan(rawText, findCategoryOpenTag(rawText, ancestorPath[matchedDepth - 1].id), 'BoQCtgy');
-  return { itemlistSpan: null, containerSpan, missing };
+  return { itemlistSpan: null, containerSpan, missing: group.missingLevels };
 }
 
 /**
@@ -394,39 +440,59 @@ export function patchX31(originalRawText, positions, x31ParseResult) {
   let nextRefCode = null;
   let templateRow = null;
 
+  const insertPositions = [];
   for (const pos of positions) {
-    try {
-      if (pos.origRawRow != null) {
+    if (pos.origRawRow != null) {
+      try {
         const { start, end } = locateRowAttributeOffsets(originalRawText, pos.id, {
           useLastQTakeoff: pos.multiRowWarning,
         });
         patches.push({ start, end, replacement: encodeFormel91(pos.effectiveQty, pos.origRawRow) });
         updatedCount++;
-      } else {
-        if (nextRefCode === null) {
-          const found = findRowTemplateAndNextRefCode(x31ParseResult.itemsById);
-          templateRow = found.templateRow;
-          nextRefCode = found.nextRefCode;
-        }
-        const plan = planInsertion(originalRawText, pos, x31ParseResult.categoryIdsPresent);
-        const refCode = String(nextRefCode).padStart(4, '0') + 'A0';
-        const row = buildSyntheticRow(pos.effectiveQty, templateRow, refCode);
-        const itemXml = buildItemFragment(pos, row);
+      } catch (err) {
+        skipped.push({ id: pos.id, reason: err.message });
+      }
+    } else {
+      insertPositions.push(pos);
+    }
+  }
+
+  if (insertPositions.length) {
+    const groups = groupInsertPositions(insertPositions, x31ParseResult.categoryIdsPresent);
+    for (const group of groups) {
+      if (group.skipReason) {
+        for (const pos of group.items) skipped.push({ id: pos.id, reason: group.skipReason });
+        continue;
+      }
+      try {
+        const plan = planInsertion(originalRawText, group);
+        const itemsXml = group.items
+          .map((pos) => {
+            if (nextRefCode === null) {
+              const found = findRowTemplateAndNextRefCode(x31ParseResult.itemsById);
+              templateRow = found.templateRow;
+              nextRefCode = found.nextRefCode;
+            }
+            const refCode = String(nextRefCode).padStart(4, '0') + 'A0';
+            const row = buildSyntheticRow(pos.effectiveQty, templateRow, refCode);
+            nextRefCode += 10;
+            return buildItemFragment(pos, row);
+          })
+          .join('');
 
         if (plan.missing.length === 0 && plan.itemlistSpan) {
-          patches.push({ start: plan.itemlistSpan.closeIdx, end: plan.itemlistSpan.closeIdx, replacement: itemXml });
+          patches.push({ start: plan.itemlistSpan.closeIdx, end: plan.itemlistSpan.closeIdx, replacement: itemsXml });
         } else if (plan.missing.length === 0) {
-          const wrapped = `<Itemlist>${itemXml}</Itemlist>`;
+          const wrapped = `<Itemlist>${itemsXml}</Itemlist>`;
           patches.push({ start: plan.containerSpan.closeIdx, end: plan.containerSpan.closeIdx, replacement: wrapped });
         } else {
-          const fragment = buildCategoryChainFragment(plan.missing, itemXml);
+          const fragment = buildCategoryChainFragment(plan.missing, itemsXml);
           patches.push({ start: plan.containerSpan.closeIdx, end: plan.containerSpan.closeIdx, replacement: fragment });
         }
-        nextRefCode += 10;
-        insertedCount++;
+        insertedCount += group.items.length;
+      } catch (err) {
+        for (const pos of group.items) skipped.push({ id: pos.id, reason: err.message });
       }
-    } catch (err) {
-      skipped.push({ id: pos.id, reason: err.message });
     }
   }
 
