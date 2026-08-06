@@ -41,8 +41,11 @@ try {
 
   await row.locator('.chk-geprueft').check();
   await page.click('#btn-export');
+  await page.waitForSelector('#export-warning-dialog[open]');
+  await page.screenshot({ path: path.join(outDir, '05-export-warning.png') });
+  await page.click('#export-warning-proceed');
   await page.waitForSelector('#toast:not([hidden])');
-  await page.screenshot({ path: path.join(outDir, '05-export-toast.png') });
+  await page.screenshot({ path: path.join(outDir, '06-export-toast.png') });
 
   console.log('Screenshots gespeichert in', outDir);
 } finally {

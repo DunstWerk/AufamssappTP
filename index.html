@@ -27,13 +27,13 @@
         <span class="file-label-title">LV-Datei (X83/X85/X86)</span>
         <span class="file-label-name" id="name-lv">Keine Datei gewählt</span>
       </label>
-      <input type="file" id="file-lv" accept=".x83,.x85,.x86,application/xml,text/xml" hidden />
+      <input type="file" id="file-lv" accept=".x83,.x85,.x86,.xml,application/xml,text/xml,*/*" hidden />
 
       <label for="file-x31" class="file-label" id="label-x31">
         <span class="file-label-title">Aufmaß-Datei (X31)</span>
         <span class="file-label-name" id="name-x31">Keine Datei gewählt</span>
       </label>
-      <input type="file" id="file-x31" accept=".x31,application/xml,text/xml" hidden />
+      <input type="file" id="file-x31" accept=".x31,.xml,application/xml,text/xml,*/*" hidden />
     </div>
 
     <button id="btn-import" class="btn btn-primary" disabled>Importieren</button>
@@ -87,7 +87,7 @@
       </label>
       <label class="filter-checkbox">
         <input type="checkbox" id="filter-nicht-in-x31" />
-        nur Positionen neu in X31 (noch kein Eintrag)
+        nur noch nicht aufgemessene Positionen
       </label>
       <div class="filter-actions">
         <button id="btn-filter-reset" class="btn btn-small">Zurücksetzen</button>

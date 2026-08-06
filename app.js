@@ -337,7 +337,7 @@ function buildItemRow(entry) {
           </div>
           <div class="row-badges">
             ${entry.isLumpSum ? '<span class="tag">Pausch.</span>' : ''}
-            ${x31Missing ? '<span class="tag tag-warn">neu in X31</span>' : ''}
+            ${x31Missing ? '<span class="tag tag-warn">Noch nicht aufgemessen</span>' : ''}
             ${unklar ? '<span class="tag tag-warn">Formel unklar</span>' : ''}
             ${multiRow ? '<span class="tag tag-warn">mehrzeilig</span>' : ''}
           </div>
@@ -571,7 +571,7 @@ function renderBanner() {
     const { idsOnlyInLv, idsOnlyInX31 } = meta.importDiagnostics;
     const parts = [];
     if (idsOnlyInLv && idsOnlyInLv.length) {
-      parts.push(`${idsOnlyInLv.length} Position(en) haben noch keinen Eintrag in der importierten X31 (normal bei ORCA — nur begonnene Mengenermittlungen werden exportiert). Werden beim Export bei Bedarf neu in die X31 eingefügt, sobald sie geprüft sind (siehe Filter "neu in X31").`);
+      parts.push(`${idsOnlyInLv.length} Position(en) haben noch keinen Eintrag in der importierten X31 (normal bei ORCA — nur begonnene Mengenermittlungen werden exportiert). Werden beim Export bei Bedarf neu in die X31 eingefügt, sobald sie geprüft sind (siehe Filter "noch nicht aufgemessen").`);
     }
     if (idsOnlyInX31 && idsOnlyInX31.length) {
       parts.push(`${idsOnlyInX31.length} Eintrag/Einträge in der X31 haben keine passende Position im LV und werden ignoriert.`);

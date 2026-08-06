@@ -32,7 +32,7 @@ try {
 
   for (const id of ['id75', 'id80']) {
     const badges = await page.locator(`.row-item[data-id="${id}"] .row-badges`).textContent();
-    assert.match(badges, /neu in X31/, `Position ${id} sollte als "neu in X31" markiert sein`);
+    assert.match(badges, /Noch nicht aufgemessen/, `Position ${id} sollte als "Noch nicht aufgemessen" markiert sein`);
     await page.locator(`.row-item[data-id="${id}"] .chk-geprueft`).check();
   }
   await page.locator('.row-item[data-id="id75"] .inp-menge').fill('3');

@@ -82,12 +82,28 @@ ein frei erfundener, fortlaufender Referenzcode ohne gesicherte Ableitung):
   ohne vorherigen X31-Eintrag enthält, unbedingt zusätzlich den Insert-Pfad
   damit verifizieren (nicht nur den Patch-Pfad).
 
-## 3. Echtes iPad/Safari nicht getestet
+## 3. Echtes iPad/Safari — ein Bug bereits gefunden und behoben
 
-Es steht in dieser Entwicklungsumgebung kein WebKit zur Verfügung. Die
-bekannten WebKit-Eigenheiten (Datei-Input-Doppel-Trigger, `position:sticky`
-mit `height:100%`) wurden von Anfang an vermieden, aber eine echte Prüfung
-auf einem iPad in Safari steht noch aus.
+Es steht in dieser Entwicklungsumgebung kein WebKit zur Verfügung, echte
+iPad-Tests laufen ausschließlich beim Nutzer. Dabei bereits gefunden:
+
+**Datei-Auswahl-Dialog zeigte GAEB-Dateien ausgegraut/nicht auswählbar an.**
+Trotz `accept`-Attribut mit sowohl Dateiendungen (`.x83`/`.x85`/`.x86`/`.x31`)
+als auch MIME-Types (`application/xml`, `text/xml`) hat iOS die Dateien
+ausgegraut — vermutlich weil iOS diesen unüblichen Endungen keine passende
+UTI (Uniform Type Identifier) zuordnet und sie dadurch trotz MIME-Hinweis
+als nicht konform herausfiltert. Behoben, indem zusätzlich `*/*` (bzw. `.xml`)
+in den `accept`-Attributen ergänzt wurde (`index.html`) — damit filtert iOS
+gar nicht mehr nach Dateityp, jede Datei ist auswählbar. Kein Sicherheits-
+problem, da `gaebLvParser.js`/`gaebX31.js` ungültige/falsche Dateien ohnehin
+mit einer klaren Fehlermeldung abweisen (siehe Bug-Regel 5 im Architektur-
+Abschnitt: jeder Import-Handler ist in try/catch, Fehler werden als Toast
+angezeigt statt die Datei stillschweigend zu ignorieren).
+
+Noch zu prüfen: die übrigen bekannten WebKit-Eigenheiten (Datei-Input-
+Doppel-Trigger, `position:sticky` mit `height:100%`) wurden von Anfang an
+vermieden, aber eine vollständige Durchsicht auf einem echten iPad steht
+weiterhin aus.
 
 ## 4. Klassifikation "Geliefert/Montiert" wird nicht exportiert
 
