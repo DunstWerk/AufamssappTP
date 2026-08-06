@@ -1,25 +1,46 @@
 # Offene Punkte
 
-## 1. REB-23.003-Exportformat BESTÄTIGT FALSCH — von ORCA zurückgewiesen (wichtigster Punkt)
+## 1. REB-23.003-Exportformat — neu implementiert nach echter Dokumentation, noch nicht gegen ORCA verifiziert (wichtigster Punkt)
 
-`gaebX31.js` exportiert Mengen aktuell nach bestem Wissen als "Formel 91"
-(freie Formel, `<Zahl>=`), eingebettet in die exakte Feldbreite des
-ursprünglichen Platzhalter-Musters. **Das ist inzwischen nachweislich falsch**:
-der Nutzer hat eine exportierte X31 real in ORCA AVA importiert, und ORCA hat
-den erzeugten Rechenansatz mit rotem Kreuz als ungültig markiert.
+**Vorgeschichte**: `gaebX31.js` hat Mengen ursprünglich geraten als "Wert
+eingebettet in die exakte Feldbreite des ursprünglichen Platzhalter-Musters"
+exportiert. Der Nutzer hat eine so exportierte X31 real in ORCA AVA
+importiert — ORCA hat den erzeugten Rechenansatz mit rotem Kreuz als ungültig
+markiert (Faktor `0,001`, Rechenansatz `A0 =;;;;`, Ergebnis `0,000` statt der
+erwarteten Werte). Grund: das `Row`-Attribut kodiert mehrere ORCA-Felder
+(Faktor, Rechenansatz, Ergebnis, Seite, Zeile, Inde) in einer Struktur, die
+komplexer ist als die ursprünglich angenommene Form, und unser Ersetzen des
+Zahlenblocks hat mehrere dieser Felder gleichzeitig verschoben.
 
-Konkreter Befund aus ORCAs Rechenansatz-Grid (Spalten Faktor / Rechenansatz /
-Ergebnis / Seite / Zeile / Inde):
-- **Unsere Zeile (falsch)**: Faktor `0,001`, Rechenansatz `A0 =;;;;` (unsinnig),
-  Ergebnis `0,000`, Zeile `T`.
-- **Eine echte, von Hand in ORCA eingetragene Zeile (richtig, Position
-  05.02.001)**: Faktor `1,000`, Rechenansatz `17=`, Ergebnis `17,000`, Zeile `A`.
+**Update**: Der Nutzer hat die offizielle GAEB/REB-23.003-Dokumentation
+bereitgestellt (siehe `docs/GAEB-X31-REB23003-Referenz.md`, vollständig
+gespeichert im Repo). Daraus zwei konkrete, bereits umgesetzte Korrekturen:
+1. **REB nutzt Komma als Dezimaltrennzeichen** (`910,4=`, `17=`), nicht Punkt
+   — unser Code hatte `toFixed(3)` benutzt, was einen Punkt erzeugt.
+2. **Die Zeile ist NICHT fest breitengebunden.** Echte Beispielzeilen aus der
+   Dokumentation sind unterschiedlich lang. Nur die 6-stellige **Blattadresse**
+   am Ende (4-stellige Blattnummer + Buchstabe + Ziffer, z.B. `0010A0`) muss
+   über einen Roundtrip stabil bleiben — der Rest darf frei neu geschrieben
+   werden. Eine "formellose" Wertangabe wie `17=` ist laut Dokumentation
+   gültige REB-Syntax.
 
-Das zeigt: das `Row`-Attribut kodiert intern MEHRERE getrennte ORCA-Felder
-(Faktor, Rechenansatz, Ergebnis, Seite, Zeile, Inde, ggf. mehr) in einer
-gepackten Struktur, die deutlich komplexer ist als die bisher angenommene
-"Zahl = Referenzcode"-Form. Unser einfaches Ersetzen des führenden
-Zahlenblocks verschiebt/zerstört mehrere dieser Felder gleichzeitig.
+`gaebX31.js` wurde entsprechend neu geschrieben: `encodeFormel91` schreibt
+jetzt `" <Wert>= <Blattadresse> "` (Komma-Dezimal, keine unnötigen
+Nachkommastellen, Blattadresse aus der Originalzeile übernommen bzw. bei
+neuen Zeilen fortlaufend vergeben). `parseFormel91` unterscheidet ORCAs
+"unbearbeitet"-Platzhalter (langer, kommaloser Zahlencode ≥ 6 Ziffern wie
+`800911`) von einem echten Wert (kurze Zahl und/oder mit Komma), damit die
+App ihre eigenen geschriebenen Werte bei einem erneuten Einlesen korrekt
+erkennt (Regressionstest: `test/scenarios/10-reb-encoding.mjs`). Details und
+Quellen: siehe `docs/GAEB-X31-REB23003-Referenz.md`.
+
+**Weiterhin nicht als korrekt bestätigt** — das ist jetzt eine fundierte
+Implementierung nach offizieller REB-23.003/GAEB-Doku statt einer Vermutung,
+aber die Dokumentation selbst weist darauf hin, dass sich ORCA AVA in
+Details (Namespaces, genaue Schreibkonventionen) vom dortigen Beispiel
+(MWM-Libero) unterscheiden kann. `REB_FORMAT_VALIDATED` bleibt `false`, der
+Export-Warndialog bleibt aktiv, bis ein echter ORCA-Reimport-Test das
+bestätigt.
 
 **Bereits behobener Teilbug, unabhängig vom Zeilenformat**: wenn mehrere neu
 eingefügte Positionen dieselbe, in der X31 fehlende Vorfahren-Kategorie

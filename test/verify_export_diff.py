@@ -141,73 +141,61 @@ def strip_ns(tag):
     return tag.split('}', 1)[1] if '}' in tag else tag
 
 
+def remove_spans(text, spans):
+    """Entfernt eine Liste (start, end)-Spannen aus text, von hinten nach vorne
+    (damit vorher berechnete Offsets gültig bleiben). Spannen dürfen sich nicht
+    überlappen."""
+    result = text
+    for start, end in sorted(spans, reverse=True):
+        result = result[:start] + result[end:]
+    return result
+
+
+def merge_overlapping(spans):
+    """Fasst identische/ineinander verschachtelte Spannen zusammen (z.B. wenn
+    mehrere IDs denselben neu eingefügten Teilbaum teilen)."""
+    merged = []
+    for start, end in sorted(spans):
+        if merged and start < merged[-1][1]:
+            prev_start, prev_end = merged[-1]
+            merged[-1] = (prev_start, max(prev_end, end))
+        else:
+            merged.append((start, end))
+    return merged
+
+
 def byte_level_check(orig_text, exported_text, changed_ids, inserted_ids, orig_root, exported_root):
+    """Prüft, dass außerhalb der markierten Änderungen (Patches + Inserts)
+    ALLES andere byte-identisch ist — unabhängig davon, ob eine gepatchte
+    Row-Zeichenkette im Export länger/kürzer ist als im Original (das REB-
+    Zeilenformat ist nicht fest breitengebunden, siehe gaebX31.js). Strategie:
+    alle markierten Spannen aus BEIDEN Texten herausschneiden (je auf ihrer
+    eigenen Seite lokalisiert) und die beiden Reste auf exakte Gleichheit
+    prüfen — das ist robuster als eine Cursor-Wanderung mit Längenannahmen."""
     if len(orig_text) == 0 or len(exported_text) == 0:
         raise AssertionError("Leere Datei übergeben")
 
-    excluded_orig = list(find_item_row_spans(orig_text, changed_ids).values()) if changed_ids else []
+    orig_changed_spans = list(find_item_row_spans(orig_text, changed_ids).values()) if changed_ids else []
+    exp_changed_spans = list(find_item_row_spans(exported_text, changed_ids).values()) if changed_ids else []
 
-    # Für jede eingefügte ID: Span im EXPORT bestimmen und als "hier wurde beim
-    # Original nichts entfernt, im Export aber etwas hinzugefügt" behandeln.
-    # Mehrere IDs können denselben neu eingefügten Teilbaum teilen (z.B. zwei
-    # neue Positionen unter derselben neu angelegten Kategorie) -> identische
-    # oder ineinander verschachtelte Spans zu einer zusammenfassen, sonst
-    # würde derselbe Textbereich mehrfach "verbraucht".
-    raw_spans = sorted(
+    exp_inserted_spans = merge_overlapping(
         {find_inserted_span(exported_text, orig_root, exported_root, iid) for iid in inserted_ids}
     ) if inserted_ids else []
-    inserted_spans_export = []
-    for start, end in raw_spans:
-        if inserted_spans_export and start < inserted_spans_export[-1][1]:
-            prev_start, prev_end = inserted_spans_export[-1]
-            inserted_spans_export[-1] = (prev_start, max(prev_end, end))
-        else:
-            inserted_spans_export.append((start, end))
 
-    excluded_orig.sort()
-    cursor_orig = 0
-    cursor_exp = 0
-    ex_iter = iter(excluded_orig)
-    ins_iter = iter(inserted_spans_export)
-    next_ex = next(ex_iter, None)
-    next_ins = next(ins_iter, None)
+    orig_reduced = remove_spans(orig_text, orig_changed_spans)
+    exp_reduced = remove_spans(exported_text, exp_changed_spans + exp_inserted_spans)
 
-    while next_ex is not None or next_ins is not None:
-        # Whichever comes next in the EXPORTED text's cursor position: an insert
-        # (pure addition, no original counterpart) or a patch (original span of
-        # equal length, value may differ).
-        # Insertions must be handled at their export-side position; patches at
-        # their original-side position. We advance whichever is closer given the
-        # current cursors, comparing patch-original-offset (translated by the
-        # already-applied inserted length) against the next insert's export offset.
-        if next_ins is not None and (next_ex is None or (cursor_orig + (next_ins[0] - cursor_exp)) <= next_ex[0]):
-            ins_start, ins_end = next_ins
-            prefix_len = ins_start - cursor_exp
-            prefix_orig = orig_text[cursor_orig:cursor_orig + prefix_len]
-            prefix_exp = exported_text[cursor_exp:cursor_exp + prefix_len]
-            if prefix_orig != prefix_exp:
-                raise AssertionError(f"Unerwartete Abweichung vor eingefügter Position (Original-Offset {cursor_orig})")
-            cursor_orig += prefix_len
-            cursor_exp = ins_end
-            next_ins = next(ins_iter, None)
-        else:
-            ex_start, ex_end = next_ex
-            prefix_len = ex_start - cursor_orig
-            prefix_orig = orig_text[cursor_orig:cursor_orig + prefix_len]
-            prefix_exp = exported_text[cursor_exp:cursor_exp + prefix_len]
-            if prefix_orig != prefix_exp:
-                raise AssertionError(f"Unerwartete Abweichung vor gepatchter Position (Original-Offset {cursor_orig})")
-            cursor_orig += prefix_len
-            cursor_exp += prefix_len
-            value_len = ex_end - ex_start
-            cursor_orig = ex_end
-            cursor_exp += value_len
-            next_ex = next(ex_iter, None)
-
-    tail_orig = orig_text[cursor_orig:]
-    tail_exp = exported_text[cursor_exp:]
-    if tail_orig != tail_exp:
-        raise AssertionError("Unerwartete Abweichung nach der letzten Änderung")
+    if orig_reduced != exp_reduced:
+        for i, (a, b) in enumerate(zip(orig_reduced, exp_reduced)):
+            if a != b:
+                raise AssertionError(
+                    f"Unerwartete Abweichung außerhalb der markierten Änderungen bei Position {i}: "
+                    f"{orig_reduced[max(0, i - 20):i + 20]!r} vs {exp_reduced[max(0, i - 20):i + 20]!r}"
+                )
+        raise AssertionError(
+            f"Unerwartete Längenabweichung außerhalb der markierten Änderungen "
+            f"(Original {len(orig_reduced)} Zeichen, Export {len(exp_reduced)} Zeichen)"
+        )
 
     print(f"[byte-level] OK — {len(changed_ids)} Patch(es), {len(inserted_ids)} Insert(s) identifiziert, Rest byte-identisch.")
 

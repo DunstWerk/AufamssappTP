@@ -25,25 +25,38 @@ function escapeXml(str) {
 
 /**
  * Erkennt den Inhalt eines <QTakeoff Row="..."> Attributwerts.
- * Erkennt sicher NUR zwei Muster:
- *  - 'blank-skeleton': das von ORCA generierte leere Platzhalter-Muster
- *    "<Zahlencode> = <4-stellige Itemnummer><Buchstabe><Ziffer>" (im
- *    mitgelieferten Beispiel für jede Position vorhanden, ohne echten Wert).
- *  - 'empty': komplett leerer/whitespace-only String.
- * Alles andere gilt als 'unknown' (z.B. eine echte REB-Formel mit Ergebnis) —
- * wird NIE geraten, sondern der Nutzer bekommt einen Hinweis, dass die Zeile
- * nicht automatisch interpretiert werden konnte.
+ *
+ * Laut der vom Nutzer bereitgestellten REB-23.003/GAEB-Dokumentation ist eine
+ * bare Zahl gefolgt von "=" (z.B. "17=" oder "910,4=", Komma als Dezimal-
+ * trennzeichen) eine gültige, formellose Wertangabe — optional gefolgt von der
+ * 6-stelligen Blattadresse (4-stellige Blattnummer + Buchstabe + Ziffer, z.B.
+ * "0010A0"). Das mitgelieferte ORCA-Beispiel enthält für jede unbearbeitete
+ * Position stattdessen einen deutlich längeren, 6- bis 8-stelligen Zahlencode
+ * vor dem "=" (z.B. "800911", "10009117") ohne Komma — das ist erkennbar KEIN
+ * plausibler gemessener Mengenwert für diese App (Stückzahlen/Meter etc.),
+ * sondern ein ORCA-internes "noch nicht bearbeitet"-Muster. Diese beiden
+ * Fälle werden deshalb anhand der Ziffernanzahl unterschieden (< 6 Ziffern
+ * oder mit Komma/Punkt -> echter Wert, >= 6 Ziffern ohne Trennzeichen ->
+ * unbearbeitetes Platzhalter-Muster). Alles andere (z.B. eine echte REB-Formel
+ * mit Bezeichner/Formelnummer/mehreren Werten) gilt als 'unknown' — wird NIE
+ * geraten, sondern der Nutzer bekommt einen Hinweis, dass die Zeile nicht
+ * automatisch interpretiert werden konnte.
  */
 export function parseFormel91(rawRow) {
   if (rawRow == null) return { kind: 'missing', recognized: false, value: null };
   if (rawRow.trim() === '') return { kind: 'empty', recognized: true, value: null };
-  const blankSkeleton = rawRow.match(/^(\s*)(\d+)(\s*=\s*)(\d{4}[A-Za-z]\d)(\s*)$/);
-  if (blankSkeleton) return { kind: 'blank-skeleton', recognized: true, value: null };
-  const bareConstant = rawRow.trim().match(/^(-?\d+(?:[.,]\d+)?)\s*=\s*$/);
-  if (bareConstant) {
-    return { kind: 'constant', recognized: true, value: parseFloat(bareConstant[1].replace(',', '.')) };
+
+  const blattadresse = extractBlattadresse(rawRow);
+  const beforeAddress = blattadresse ? rawRow.slice(0, rawRow.lastIndexOf(blattadresse)) : rawRow;
+  const bare = beforeAddress.trim().match(/^(-?\d+(?:[.,](\d+))?)\s*=\s*$/);
+  if (!bare) return { kind: 'unknown', recognized: false, value: null };
+
+  const hasDecimalMarker = bare[2] !== undefined;
+  const digitCount = bare[1].replace(/[-,.]/g, '').length;
+  if (!hasDecimalMarker && digitCount >= 6) {
+    return { kind: 'blank-skeleton', recognized: true, value: null };
   }
-  return { kind: 'unknown', recognized: false, value: null };
+  return { kind: 'constant', recognized: true, value: parseFloat(bare[1].replace(',', '.')) };
 }
 
 function findBoQEl(doc) {
@@ -114,41 +127,55 @@ export function diffIdSets(lvItemsById, x31ItemsById) {
   return { idsOnlyInLv, idsOnlyInX31 };
 }
 
-function formatQty(value) {
-  return value.toFixed(3);
-}
-
-function padToLength(str, len) {
-  if (str.length >= len) return str.slice(0, len);
-  return str + ' '.repeat(len - str.length);
+/**
+ * Formatiert einen Zahlenwert nach REB-23.003-Konvention: Komma als
+ * Dezimaltrennzeichen (nicht Punkt!), ganze Zahlen ohne Dezimalteil.
+ * Quelle: offizielle REB-Zeilenbeispiele ("17=" für den ganzzahligen Wert 17,
+ * "910,4=" für 910,4) — kein fester Nachkommastellen-Zwang.
+ */
+function formatRebValue(value) {
+  const rounded = Math.round(value * 1000) / 1000; // auf 3 Nachkommastellen begrenzen
+  if (Number.isInteger(rounded)) return String(rounded);
+  return rounded
+    .toFixed(3)
+    .replace(/0+$/, '')
+    .replace(/\.$/, '')
+    .replace('.', ',');
 }
 
 /**
- * Bestmögliche Kodierung eines Zahlenwerts in eine REB-23.003-"Formel
- * 91"-Zeile, unter Beibehaltung der exakten Feldbreite der ursprünglichen
- * Zeile. Siehe Modul-Kommentar: NICHT gegen ein echtes ORCA-Beispiel mit
- * eingetragener Menge validiert (REB_FORMAT_VALIDATED = false).
+ * Extrahiert die Blattadresse (6-stelliger Code: 4-stellige Blattnummer +
+ * Buchstabe (Zeilenblock) + Ziffer (laufende Nummer im Block), z.B. "0010A0")
+ * vom Ende einer bestehenden Row-Zeichenkette. Laut REB-23.003-Doku dient sie
+ * dem Wiederfinden der Aufmaßzeile auf dem Aufmaßblatt und muss bei einem
+ * Roundtrip (Export → Bearbeitung → Re-Import) erhalten bleiben — der Rest
+ * der Zeile (Formel/Wert) ist dagegen NICHT fest breitengebunden und darf
+ * frei neu geschrieben werden.
+ */
+function extractBlattadresse(rawRow) {
+  if (!rawRow) return null;
+  const m = rawRow.match(/(\d{4}[A-Za-z]\d)\s*$/);
+  return m ? m[1] : null;
+}
+
+/**
+ * Kodiert einen Endwert als einfache REB-23.003-Zeile: eine reine Zahl
+ * gefolgt von "=" (laut REB-Doku eine gültige, "formellose" Wertangabe, siehe
+ * z.B. das Beispiel "910,4=" ohne vorangestellten Formel-Code), gefolgt von
+ * der (aus der Originalzeile übernommenen bzw. bei neuen Zeilen frei
+ * vergebenen) Blattadresse. Bewusst KEIN Nachbau der ursprünglichen
+ * Feldbreiten mehr (siehe Funktionskommentar `extractBlattadresse`) — nur die
+ * Blattadresse selbst muss stabil bleiben.
  *
- * Strategie: das führende Zahlenfeld der Original-Zeile (Formelcode/Leerwert)
- * wird durch den neuen Wert ersetzt, rechtsbündig in derselben Feldbreite;
- * das Trennzeichen "=" und der nachfolgende Referenzteil (Item-Nummer/Index)
- * bleiben exakt erhalten, da sie vermutlich für die Wiedererkennung durch
- * ORCA relevant sind und ihre genaue Bedeutung nicht gesichert ist.
+ * Weiterhin nicht gegen eine echte, von ORCA AVA erzeugte befüllte X31
+ * verifiziert (REB_FORMAT_VALIDATED = false) — basiert auf der vom Nutzer
+ * bereitgestellten REB-23.003/GAEB-Dokumentation, nicht auf einem eigenen
+ * ORCA-Testexport.
  */
 export function encodeFormel91(value, originalRawRow) {
-  const valueStr = formatQty(value);
-  if (originalRawRow == null) {
-    // Keine Vorlage vorhanden — Notfall-Fallback ohne Breitenreferenz.
-    return `${valueStr}=`;
-  }
-  const m = originalRawRow.match(/^(\s*)(\d+)(\s*=.*)$/);
-  if (!m) {
-    return padToLength(`${valueStr}=`, originalRawRow.length);
-  }
-  const [, leadSpace, numField, rest] = m;
-  const fieldWidth = leadSpace.length + numField.length;
-  const newNumField = valueStr.padStart(fieldWidth, ' ').slice(-Math.max(fieldWidth, valueStr.length));
-  return newNumField + rest;
+  const valueStr = formatRebValue(value);
+  const blattadresse = extractBlattadresse(originalRawRow);
+  return blattadresse ? ` ${valueStr}= ${blattadresse} ` : ` ${valueStr}= `;
 }
 
 /**
@@ -268,47 +295,28 @@ function findDirectItemlistSpan(rawText, boqBodySpan) {
   return { openIdx: itemlistIdx, closeIdx };
 }
 
-function formatQty3(value) {
-  return value.toFixed(3);
+/**
+ * Kodiert eine Zeile für eine neu eingefügte Position (kein Vorlage-Row
+ * vorhanden) — gleiche Wertformatierung wie `encodeFormel91`, aber mit einer
+ * frei vergebenen, fortlaufenden Blattadresse (siehe `findNextRefCode`), da
+ * keine bestehende Blattadresse übernommen werden kann.
+ */
+function buildSyntheticRow(effectiveQty, refCode) {
+  const valueStr = formatRebValue(effectiveQty);
+  return ` ${valueStr}= ${refCode} `;
 }
 
 /**
- * Klont die Feldbreiten eines vorhandenen "blank-skeleton"-Rows und ersetzt
- * Wert- und Referenzfeld. Für Positionen OHNE eigenen Vorlage-Row (Insert-Pfad),
- * siehe Modul-Kommentar zu REB_FORMAT_VALIDATED — genauso unverifiziert wie der
- * Patch-Pfad, hier zusätzlich auch der Referenzteil frei erfunden (fortlaufende
- * Nummer, siehe nextSyntheticRefCode), nicht aus der Position selbst abgeleitet,
- * da sich empirisch zeigte, dass der Referenzcode in den vorhandenen Zeilen NICHT
- * mit der LV-Item-/Index-Nummer übereinstimmt, sondern eher eine fortlaufende
- * Zeilennummer des Mengenermittlungsblatts ist.
+ * Höchste bereits im Dokument verwendete 4-stellige Blattnummer (für neue,
+ * fortlaufend nummerierte Blattadressen bei frisch eingefügten Zeilen).
  */
-function buildSyntheticRow(effectiveQty, templateRow, refCode) {
-  const valueStr = formatQty3(effectiveQty);
-  if (!templateRow) return `${valueStr}=`;
-  const m = templateRow.match(/^(\s*)(\d+)(\s*=\s*)(\d{4}[A-Za-z]\d)(\s*)$/);
-  if (!m) return `${valueStr}=`;
-  const [, leadSpace, numField, midSep, refField, trailSpace] = m;
-  const fieldWidth = leadSpace.length + numField.length;
-  const newNumField = valueStr.padStart(fieldWidth, ' ').slice(-Math.max(fieldWidth, valueStr.length));
-  const newRefField = refCode.padStart(refField.length, '0').slice(-Math.max(refField.length, refCode.length));
-  return newNumField + midSep + newRefField + trailSpace;
-}
-
-/**
- * Findet ein beliebiges vorhandenes 'blank-skeleton'-Row als Breiten-Vorlage
- * und die höchste bereits verwendete 4-stellige Referenznummer (für neue,
- * fortlaufend nummerierte Zeilen — siehe buildSyntheticRow-Kommentar).
- */
-function findRowTemplateAndNextRefCode(x31ItemsById) {
-  let templateRow = null;
+function findNextRefCode(x31ItemsById) {
   let maxRef = 0;
   for (const entry of x31ItemsById.values()) {
-    if (!entry.rawRow) continue;
-    if (!templateRow && entry.formelKind === 'blank-skeleton') templateRow = entry.rawRow;
-    const m = entry.rawRow.match(/(\d{4})[A-Za-z]\d\s*$/);
-    if (m) maxRef = Math.max(maxRef, parseInt(m[1], 10));
+    const addr = extractBlattadresse(entry.rawRow);
+    if (addr) maxRef = Math.max(maxRef, parseInt(addr.slice(0, 4), 10));
   }
-  return { templateRow, nextRefCode: maxRef + 10 };
+  return maxRef + 10;
 }
 
 function buildItemFragment(pos, row) {
@@ -438,7 +446,6 @@ export function patchX31(originalRawText, positions, x31ParseResult) {
   let updatedCount = 0;
   let insertedCount = 0;
   let nextRefCode = null;
-  let templateRow = null;
 
   const insertPositions = [];
   for (const pos of positions) {
@@ -469,12 +476,10 @@ export function patchX31(originalRawText, positions, x31ParseResult) {
         const itemsXml = group.items
           .map((pos) => {
             if (nextRefCode === null) {
-              const found = findRowTemplateAndNextRefCode(x31ParseResult.itemsById);
-              templateRow = found.templateRow;
-              nextRefCode = found.nextRefCode;
+              nextRefCode = findNextRefCode(x31ParseResult.itemsById);
             }
             const refCode = String(nextRefCode).padStart(4, '0') + 'A0';
-            const row = buildSyntheticRow(pos.effectiveQty, templateRow, refCode);
+            const row = buildSyntheticRow(pos.effectiveQty, refCode);
             nextRefCode += 10;
             return buildItemFragment(pos, row);
           })
