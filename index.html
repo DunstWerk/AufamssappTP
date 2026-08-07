@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<meta name="theme-color" content="#1c6dd0" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="default" />
+<meta name="apple-mobile-web-app-title" content="Aufmaß GAEB" />
+<link rel="manifest" href="manifest.webmanifest" />
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png" />
+<title>Aufmaßprüfung GAEB</title>
+<link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+
+<div id="toast" class="toast" hidden></div>
+
+<!-- ============ Import-Screen ============ -->
+<section id="screen-import" class="screen">
+  <div class="import-card">
+    <h1>Aufmaßprüfung GAEB</h1>
+    <p class="muted">LV (X83/X85/X86) und die dazugehörige Aufmaß-Datei (X31) aus ORCA AVA importieren.</p>
+
+    <div class="file-picker">
+      <label for="file-lv" class="file-label" id="label-lv">
+        <span class="file-label-title">LV-Datei (X83/X85/X86)</span>
+        <span class="file-label-name" id="name-lv">Keine Datei gewählt</span>
+      </label>
+      <input type="file" id="file-lv" accept=".x83,.x85,.x86,.xml,application/xml,text/xml,*/*" hidden />
+
+      <label for="file-x31" class="file-label" id="label-x31">
+        <span class="file-label-title">Aufmaß-Datei (X31)</span>
+        <span class="file-label-name" id="name-x31">Keine Datei gewählt</span>
+      </label>
+      <input type="file" id="file-x31" accept=".x31,.xml,application/xml,text/xml,*/*" hidden />
+
+      <label for="file-csv" class="file-label" id="label-csv">
+        <span class="file-label-title">Bisheriger Arbeitsstand (Excel-Sicherung, optional)</span>
+        <span class="file-label-name" id="name-csv">Keine Datei gewählt</span>
+      </label>
+      <input type="file" id="file-csv" accept=".csv,text/csv,*/*" hidden />
+    </div>
+
+    <button id="btn-import" class="btn btn-primary" disabled>Importieren</button>
+    <p class="muted small">Ein bereits gespeichertes Projekt wird beim nächsten Start automatisch ohne erneuten Import geladen. Mit der optionalen Excel-Sicherung lässt sich ein zuvor gespeicherter Arbeitsstand (Geprüft, Menge, Klassifikation, Bemerkung) beim Import wiederherstellen.</p>
+  </div>
+</section>
+
+<!-- ============ Listen-Screen ============ -->
+<section id="screen-list" class="screen" hidden>
+  <div class="pinned-top">
+    <div class="title-row">
+      <h1 id="project-title">Aufmaß</h1>
+      <button id="btn-reimport" class="btn btn-small">Neues LV importieren</button>
+    </div>
+    <div class="progress-row">
+      <div class="progress-bar"><div id="progress-fill" class="progress-fill"></div></div>
+      <span id="progress-label" class="progress-label">0 / 0 geprüft</span>
+    </div>
+
+    <div id="banner" class="banner" hidden></div>
+
+    <div class="toolbar">
+      <input id="search-input" type="search" placeholder="Suche (Positionsnummer, Text, Bemerkung)…" class="search-input" />
+      <button id="btn-filter" class="btn btn-small">
+        Filter <span id="filter-badge" class="badge" hidden>0</span>
+      </button>
+      <button id="btn-export" class="btn btn-primary btn-small">Exportieren</button>
+      <button id="btn-export-excel" class="btn btn-small">Excel-Sicherung</button>
+    </div>
+
+    <div id="filter-panel" class="filter-panel" hidden>
+      <div class="filter-group">
+        <span class="filter-group-label">Geprüft</span>
+        <div class="segmented" data-filter="geprueft">
+          <button data-value="alle" class="seg-btn seg-active">Alle</button>
+          <button data-value="ja" class="seg-btn">Ja</button>
+          <button data-value="nein" class="seg-btn">Nein</button>
+        </div>
+      </div>
+      <div class="filter-group">
+        <span class="filter-group-label">Klassifikation</span>
+        <div class="segmented" data-filter="klassifikation">
+          <button data-value="alle" class="seg-btn seg-active">Alle</button>
+          <button data-value="geliefert" class="seg-btn">Geliefert</button>
+          <button data-value="montiert" class="seg-btn">Montiert</button>
+        </div>
+      </div>
+      <label class="filter-checkbox">
+        <input type="checkbox" id="filter-unklar" />
+        nur unklare Formelzeilen (X31)
+      </label>
+      <label class="filter-checkbox">
+        <input type="checkbox" id="filter-nicht-in-x31" />
+        nur noch nicht aufgemessene Positionen
+      </label>
+      <div class="filter-actions">
+        <button id="btn-filter-reset" class="btn btn-small">Zurücksetzen</button>
+        <button id="btn-filter-apply" class="btn btn-primary btn-small">Anwenden</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="list-container" class="list-container"></div>
+</section>
+
+<!-- ============ Re-Import-Diagnose-Dialog ============ -->
+<dialog id="reimport-dialog">
+  <h2>LV aktualisiert</h2>
+  <p id="reimport-summary"></p>
+  <div class="dialog-actions">
+    <button id="reimport-ack" class="btn btn-primary">Verstanden</button>
+  </div>
+</dialog>
+
+<!-- ============ Export-Warnung (unverifiziertes Rechenansatz-Format) ============ -->
+<dialog id="export-warning-dialog">
+  <h2>Export-Format noch nicht bestätigt</h2>
+  <p>
+    ORCA AVA hat exportierte Rechenansätze aus dieser App bereits als ungültig
+    zurückgewiesen (rotes Kreuz, falsche Faktor-/Ergebnis-Werte). Das
+    Zahlenformat für die Mengenermittlung ist noch nicht korrekt nachgebildet.
+  </p>
+  <p>
+    Bitte den Import in ORCA AVA nach dem Export sorgfältig prüfen, oder
+    stattdessen die "Excel-Sicherung" zur manuellen Eingabe verwenden.
+  </p>
+  <div class="dialog-actions">
+    <button id="export-warning-cancel" class="btn">Abbrechen</button>
+    <button id="export-warning-proceed" class="btn btn-primary">Trotzdem exportieren</button>
+  </div>
+</dialog>
+
+<script type="module" src="app.js"></script>
+</body>
+</html>

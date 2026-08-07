@@ -1,0 +1,150 @@
+# Offene Punkte
+
+## 0. Export-Dateiname bekam doppelte Endung auf iOS (behoben)
+
+Der Nutzer konnte eine exportierte X31 auf dem iPad gar nicht erst in ORCA
+öffnen ("Datei nicht gefunden oder nicht lesbar") — Ursache: der Dateiname
+landete als `...Aufmass_20260807.X31.xml` (doppelte Endung). iOS Safari hängt
+beim Speichern eines Downloads teils die zum Blob-**MIME-Type** passende
+Endung zusätzlich an den Dateinamen an, auch wenn dieser schon eine (für iOS
+unübliche) Endung wie `.X31` hat — unser Export hatte den Blob ohne expliziten
+MIME-Type erstellt, wodurch `downloadText()` auf `application/xml` zurückfiel.
+Behoben: X31-Export nutzt jetzt explizit `application/octet-stream` (kein
+"bekannter" Dateityp, den iOS umbenennen möchte), `downloadText()`s eigener
+Default wurde ebenfalls von `application/xml` auf `application/octet-stream`
+geändert. **Wichtig**: das bedeutet, dass bisher noch KEIN X31-Export vom
+iPad aus tatsächlich in ORCA geöffnet werden konnte — der Row-Format-Test aus
+Punkt 1 unten steht also weiterhin komplett aus, nicht nur die Werte-Frage.
+
+## 1. REB-23.003-Exportformat — neu implementiert nach echter Dokumentation, noch nicht gegen ORCA verifiziert (wichtigster Punkt)
+
+**Vorgeschichte**: `gaebX31.js` hat Mengen ursprünglich geraten als "Wert
+eingebettet in die exakte Feldbreite des ursprünglichen Platzhalter-Musters"
+exportiert. Der Nutzer hat eine so exportierte X31 real in ORCA AVA
+importiert — ORCA hat den erzeugten Rechenansatz mit rotem Kreuz als ungültig
+markiert (Faktor `0,001`, Rechenansatz `A0 =;;;;`, Ergebnis `0,000` statt der
+erwarteten Werte). Grund: das `Row`-Attribut kodiert mehrere ORCA-Felder
+(Faktor, Rechenansatz, Ergebnis, Seite, Zeile, Inde) in einer Struktur, die
+komplexer ist als die ursprünglich angenommene Form, und unser Ersetzen des
+Zahlenblocks hat mehrere dieser Felder gleichzeitig verschoben.
+
+**Update**: Der Nutzer hat die offizielle GAEB/REB-23.003-Dokumentation
+bereitgestellt (siehe `docs/GAEB-X31-REB23003-Referenz.md`, vollständig
+gespeichert im Repo). Daraus zwei konkrete, bereits umgesetzte Korrekturen:
+1. **REB nutzt Komma als Dezimaltrennzeichen** (`910,4=`, `17=`), nicht Punkt
+   — unser Code hatte `toFixed(3)` benutzt, was einen Punkt erzeugt.
+2. **Die Zeile ist NICHT fest breitengebunden.** Echte Beispielzeilen aus der
+   Dokumentation sind unterschiedlich lang. Nur die 6-stellige **Blattadresse**
+   am Ende (4-stellige Blattnummer + Buchstabe + Ziffer, z.B. `0010A0`) muss
+   über einen Roundtrip stabil bleiben — der Rest darf frei neu geschrieben
+   werden. Eine "formellose" Wertangabe wie `17=` ist laut Dokumentation
+   gültige REB-Syntax.
+
+`gaebX31.js` wurde entsprechend neu geschrieben: `encodeFormel91` schreibt
+jetzt `" <Wert>= <Blattadresse> "` (Komma-Dezimal, keine unnötigen
+Nachkommastellen, Blattadresse aus der Originalzeile übernommen bzw. bei
+neuen Zeilen fortlaufend vergeben). `parseFormel91` unterscheidet ORCAs
+"unbearbeitet"-Platzhalter (langer, kommaloser Zahlencode ≥ 6 Ziffern wie
+`800911`) von einem echten Wert (kurze Zahl und/oder mit Komma), damit die
+App ihre eigenen geschriebenen Werte bei einem erneuten Einlesen korrekt
+erkennt (Regressionstest: `test/scenarios/10-reb-encoding.mjs`). Details und
+Quellen: siehe `docs/GAEB-X31-REB23003-Referenz.md`.
+
+**Weiterhin nicht als korrekt bestätigt** — das ist jetzt eine fundierte
+Implementierung nach offizieller REB-23.003/GAEB-Doku statt einer Vermutung,
+aber die Dokumentation selbst weist darauf hin, dass sich ORCA AVA in
+Details (Namespaces, genaue Schreibkonventionen) vom dortigen Beispiel
+(MWM-Libero) unterscheiden kann. `REB_FORMAT_VALIDATED` bleibt `false`, der
+Export-Warndialog bleibt aktiv, bis ein echter ORCA-Reimport-Test das
+bestätigt.
+
+**Bereits behobener Teilbug, unabhängig vom Zeilenformat**: wenn mehrere neu
+eingefügte Positionen dieselbe, in der X31 fehlende Vorfahren-Kategorie
+teilen, wurde diese Kategorie doppelt angelegt (zwei `<BoQCtgy>` mit
+identischer ID) — das war beim ORCA-Import zwar (laut Nutzer) noch les- und
+zuordenbar, ist aber ungültige GAEB-Struktur. Gefixt in `groupInsertPositions`
+(gaebX31.js): Positionen mit identischer fehlender Kette werden jetzt korrekt
+zu einer Gruppe zusammengefasst, die die Kategorie nur einmal anlegt.
+Regressionstest: `test/scenarios/05c-export-insert-shared-category.mjs`.
+
+**Noch offen — der eigentliche Zeilenformat-Fehler.** Der vom Nutzer als
+"von ORCA" bezeichnete zweite Vergleichsfile enthielt (geprüft) tatsächlich
+NICHT die 05.02.001/`17=`-Beispielzeile, sondern war byte-identisch mit dem
+ursprünglichen leeren Beispiel — vermutlich ein Missverständnis, welche Datei
+gemeint war. Für eine echte Byte-Diff-Analyse fehlt weiterhin die tatsächliche
+Export-Datei mit der befüllten Zeile.
+
+**Präzise benötigt, um das endlich richtig zu lösen** (bitte genau so, nicht
+nur einen Screenshot):
+1. In ORCA AVA die ORIGINAL-X31 (unverändert, leeres Formular) öffnen.
+2. Für EINE Position von Hand einen Rechenansatz eintragen (z.B. `17=`, wie im
+   Screenshot gezeigt) und NUR das speichern/exportieren — keine anderen
+   Änderungen.
+3. Diese exportierte X31-Datei hier hochladen (die Datei selbst, nicht nur
+   ein Screenshot des ORCA-Grids).
+4. Mit `node tools/reb23003-diff.mjs <Original-X31> <von-Hand-befuellte-X31>`
+   Zeichen-für-Zeichen vergleichen, das tatsächliche Format ermitteln,
+   `encodeFormel91()`/`parseFormel91()` entsprechend neu schreiben (die
+   gepackte Mehrfeld-Struktur berücksichtigen, nicht nur einen einzelnen
+   Zahlenblock), `REB_FORMAT_VALIDATED = true` setzen, Warn-Dialog in
+   `app.js` entfernen, Regressions-Fixture ergänzen.
+
+**Bis dahin**: die App zeigt vor jedem X31-Export einen Bestätigungsdialog
+("Export-Format noch nicht bestätigt", siehe `index.html`/`app.js`
+`confirmExportWarning`), der ausdrücklich auf die bestätigte ORCA-Ablehnung
+hinweist und Abbrechen anbietet. Die Excel-Sicherung bleibt der verlässliche
+Weg für die manuelle Eingabe in ORCA.
+
+## 2. Positionen ohne X31-Eintrag (gelöst — Struktur-Einfügung)
+
+Geklärt: die mitgelieferte Beispiel-X31 deckt nur 17 von 105 LV-Positionen ab,
+weil ORCA in der X31 grundsätzlich nur Positionen exportiert, für die bereits
+eine Mengenermittlung begonnen wurde — kein Datenfehler. Auf Nutzerwunsch
+werden geprüfte/gemessene Positionen OHNE vorhandenen X31-Eintrag beim Export
+jetzt als neue `<Item>`-Knoten (und nötigenfalls fehlende Vorfahren-Kategorien)
+in die X31 eingefügt, statt ausgeschlossen zu werden (siehe `gaebX31.js`,
+`planInsertion`/`patchX31`, Pfad B).
+
+**Zusätzliches Risiko dieses Insert-Pfads** (siehe Punkt 1 — der Row-Wert ist
+für neu eingefügte Zeilen genauso betroffen wie für gepatchte, plus zusätzlich
+ein frei erfundener, fortlaufender Referenzcode ohne gesicherte Ableitung):
+- Neu eingefügte `<BoQCtgy>`-Knoten übernehmen ID/RNoPart/Label 1:1 aus dem LV
+  (verifiziert: Kategorie-IDs sind zwischen LV und X31 identisch), das ist der
+  sicherste Teil dieser Erweiterung.
+- Jede neu eingefügte Position wird defensiv abgesichert: kann die Einfüge-
+  stelle nicht eindeutig bestimmt werden (siehe `findDirectItemlistSpan` in
+  `gaebX31.js`), wird NICHT geraten — die Position landet in `skipped` und
+  fehlt sichtbar im Export-Toast, statt riskant falsch eingefügt zu werden.
+- **Sobald die Testdatei aus Punkt 1 vorliegt**: falls sie auch eine Position
+  ohne vorherigen X31-Eintrag enthält, unbedingt zusätzlich den Insert-Pfad
+  damit verifizieren (nicht nur den Patch-Pfad).
+
+## 3. Echtes iPad/Safari — ein Bug bereits gefunden und behoben
+
+Es steht in dieser Entwicklungsumgebung kein WebKit zur Verfügung, echte
+iPad-Tests laufen ausschließlich beim Nutzer. Dabei bereits gefunden:
+
+**Datei-Auswahl-Dialog zeigte GAEB-Dateien ausgegraut/nicht auswählbar an.**
+Trotz `accept`-Attribut mit sowohl Dateiendungen (`.x83`/`.x85`/`.x86`/`.x31`)
+als auch MIME-Types (`application/xml`, `text/xml`) hat iOS die Dateien
+ausgegraut — vermutlich weil iOS diesen unüblichen Endungen keine passende
+UTI (Uniform Type Identifier) zuordnet und sie dadurch trotz MIME-Hinweis
+als nicht konform herausfiltert. Behoben, indem zusätzlich `*/*` (bzw. `.xml`)
+in den `accept`-Attributen ergänzt wurde (`index.html`) — damit filtert iOS
+gar nicht mehr nach Dateityp, jede Datei ist auswählbar. Kein Sicherheits-
+problem, da `gaebLvParser.js`/`gaebX31.js` ungültige/falsche Dateien ohnehin
+mit einer klaren Fehlermeldung abweisen (siehe Bug-Regel 5 im Architektur-
+Abschnitt: jeder Import-Handler ist in try/catch, Fehler werden als Toast
+angezeigt statt die Datei stillschweigend zu ignorieren).
+
+Noch zu prüfen: die übrigen bekannten WebKit-Eigenheiten (Datei-Input-
+Doppel-Trigger, `position:sticky` mit `height:100%`) wurden von Anfang an
+vermieden, aber eine vollständige Durchsicht auf einem echten iPad steht
+weiterhin aus.
+
+## 4. Klassifikation "Geliefert/Montiert" wird nicht exportiert
+
+Bewusste Entscheidung (siehe Plan/README): es gibt kein sicheres
+GAEB-Freitextfeld dafür. Nur die berechnete effektive Menge
+(Menge × Faktor) wird exportiert, die Klassifizierung selbst bleibt nur
+lokal in IndexedDB. Bei Bedarf später revidierbar.
