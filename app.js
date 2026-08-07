@@ -643,7 +643,7 @@ async function handleExport() {
       showToast('Export abgebrochen: keine der geprüften Positionen konnte verarbeitet werden — ' + skipped.map((s) => s.reason).join(' '), true);
       return;
     }
-    downloadText(patchedText, buildExportFilename());
+    downloadText(patchedText, buildExportFilename(), 'application/octet-stream');
 
     const parts = [];
     if (updatedCount) parts.push(`${updatedCount} Position(en) aktualisiert`);
@@ -672,7 +672,12 @@ function buildExportFilename() {
 }
 
 function downloadText(text, filename, mimeType) {
-  const blob = new Blob([text], { type: mimeType || 'application/xml' });
+  // application/octet-stream als Default: iOS Safari hängt bei bekannten
+  // MIME-Types wie "application/xml" beim Speichern teils zusätzlich ".xml"
+  // an den Dateinamen an, selbst wenn dieser schon eine (unübliche) Endung
+  // wie ".X31" hat -> Doppel-Endung ("...X31.xml"), die ORCA nicht mehr als
+  // X31 erkennt. octet-stream verhindert dieses "Korrigieren" der Endung.
+  const blob = new Blob([text], { type: mimeType || 'application/octet-stream' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;

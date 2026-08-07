@@ -1,5 +1,21 @@
 # Offene Punkte
 
+## 0. Export-Dateiname bekam doppelte Endung auf iOS (behoben)
+
+Der Nutzer konnte eine exportierte X31 auf dem iPad gar nicht erst in ORCA
+öffnen ("Datei nicht gefunden oder nicht lesbar") — Ursache: der Dateiname
+landete als `...Aufmass_20260807.X31.xml` (doppelte Endung). iOS Safari hängt
+beim Speichern eines Downloads teils die zum Blob-**MIME-Type** passende
+Endung zusätzlich an den Dateinamen an, auch wenn dieser schon eine (für iOS
+unübliche) Endung wie `.X31` hat — unser Export hatte den Blob ohne expliziten
+MIME-Type erstellt, wodurch `downloadText()` auf `application/xml` zurückfiel.
+Behoben: X31-Export nutzt jetzt explizit `application/octet-stream` (kein
+"bekannter" Dateityp, den iOS umbenennen möchte), `downloadText()`s eigener
+Default wurde ebenfalls von `application/xml` auf `application/octet-stream`
+geändert. **Wichtig**: das bedeutet, dass bisher noch KEIN X31-Export vom
+iPad aus tatsächlich in ORCA geöffnet werden konnte — der Row-Format-Test aus
+Punkt 1 unten steht also weiterhin komplett aus, nicht nur die Werte-Frage.
+
 ## 1. REB-23.003-Exportformat — neu implementiert nach echter Dokumentation, noch nicht gegen ORCA verifiziert (wichtigster Punkt)
 
 **Vorgeschichte**: `gaebX31.js` hat Mengen ursprünglich geraten als "Wert
