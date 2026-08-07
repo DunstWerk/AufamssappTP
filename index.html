@@ -34,10 +34,16 @@
         <span class="file-label-name" id="name-x31">Keine Datei gewählt</span>
       </label>
       <input type="file" id="file-x31" accept=".x31,.xml,application/xml,text/xml,*/*" hidden />
+
+      <label for="file-csv" class="file-label" id="label-csv">
+        <span class="file-label-title">Bisheriger Arbeitsstand (Excel-Sicherung, optional)</span>
+        <span class="file-label-name" id="name-csv">Keine Datei gewählt</span>
+      </label>
+      <input type="file" id="file-csv" accept=".csv,text/csv,*/*" hidden />
     </div>
 
     <button id="btn-import" class="btn btn-primary" disabled>Importieren</button>
-    <p class="muted small">Ein bereits gespeichertes Projekt wird beim nächsten Start automatisch ohne erneuten Import geladen.</p>
+    <p class="muted small">Ein bereits gespeichertes Projekt wird beim nächsten Start automatisch ohne erneuten Import geladen. Mit der optionalen Excel-Sicherung lässt sich ein zuvor gespeicherter Arbeitsstand (Geprüft, Menge, Klassifikation, Bemerkung) beim Import wiederherstellen.</p>
   </div>
 </section>
 

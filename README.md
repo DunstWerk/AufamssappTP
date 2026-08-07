@@ -35,7 +35,13 @@ privaten Repos).
    mit BOM) mit allen Positionen (Soll, erfasste Menge, Klassifikation,
    Abrechnungsmenge, Geprüft-Status, Bemerkung) — als Sicherheitskopie der
    Aufmaßdaten, falls sie z.B. bei Problemen mit dem X31-Reimport von Hand in
-   ORCA nachgetragen werden müssen. Kein Rückimport-Format, nur zum Lesen.
+   ORCA nachgetragen werden müssen.
+6. Diese Excel-Sicherung kann beim (Neu-)Import optional als dritte Datei
+   mitgegeben werden ("Bisheriger Arbeitsstand"), um Geprüft/Menge/
+   Klassifikation/Bemerkung wiederherzustellen — z.B. nach einem
+   Gerätewechsel oder nach dem Löschen der Website-Daten (Cache-Reset), wenn
+   IndexedDB leer ist. Zuordnung läuft über eine technische ID-Spalte in der
+   CSV, mit Fallback auf die Positionsnummer.
 
 **Export-Verhalten**: alle geprüften Positionen werden exportiert. Hat eine
 Position bereits einen X31-Eintrag, wird ihr Wert gepatcht; hat sie noch

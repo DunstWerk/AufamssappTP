@@ -57,7 +57,10 @@ try {
   assert.equal(buf[2], 0xbf);
   const text = buf.toString('utf-8').replace(/^﻿/, '');
   const lines = text.split('\r\n');
-  assert.equal(lines[0], 'Positionsnummer;Kategorie;Kurztext;Einheit;Soll-Menge;Geprüft;Erfasste Menge;Klassifikation;Abrechnungsmenge;Bemerkung');
+  assert.equal(
+    lines[0],
+    'Positionsnummer;Kategorie;Kurztext;Einheit;Soll-Menge;Geprüft;Erfasste Menge;Klassifikation;Abrechnungsmenge;Bemerkung;ID (technisch, für Re-Import — bitte nicht ändern)'
+  );
   assert.equal(lines.length, 1 + 105 + (lines[lines.length - 1] === '' ? 1 : 0));
 
   // Positionsnummer muss als Excel-Text-Formel ="01.0001" kodiert sein

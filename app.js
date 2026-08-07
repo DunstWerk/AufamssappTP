@@ -83,6 +83,7 @@ function showListScreen() {
 function wireImportScreen() {
   const fileLv = document.getElementById('file-lv');
   const fileX31 = document.getElementById('file-x31');
+  const fileCsv = document.getElementById('file-csv');
   const btnImport = document.getElementById('btn-import');
 
   fileLv.addEventListener('change', () => {
@@ -93,11 +94,14 @@ function wireImportScreen() {
     document.getElementById('name-x31').textContent = fileX31.files[0]?.name || 'Keine Datei gewählt';
     btnImport.disabled = !(fileLv.files[0] && fileX31.files[0]);
   });
+  fileCsv.addEventListener('change', () => {
+    document.getElementById('name-csv').textContent = fileCsv.files[0]?.name || 'Keine Datei gewählt';
+  });
 
   btnImport.addEventListener('click', async () => {
     btnImport.disabled = true;
     try {
-      await handleImport(fileLv.files[0], fileX31.files[0]);
+      await handleImport(fileLv.files[0], fileX31.files[0], fileCsv.files[0] || null);
       showListScreen();
     } catch (err) {
       console.error(err);
@@ -118,7 +122,7 @@ function decodeBytes(bytes, encoding) {
   return new TextDecoder(encoding || 'UTF-8').decode(bytes);
 }
 
-async function handleImport(lvFile, x31File) {
+async function handleImport(lvFile, x31File, csvFile) {
   if (!lvFile || !x31File) throw new Error('Bitte beide Dateien auswählen.');
   const lvBuf = await lvFile.arrayBuffer();
   const x31Buf = await x31File.arrayBuffer();
@@ -170,6 +174,11 @@ async function handleImport(lvFile, x31File) {
     addedCount++;
   }
 
+  let csvOverlayResult = null;
+  if (csvFile) {
+    csvOverlayResult = await applyCsvOverlay(csvFile, newLv);
+  }
+
   await db.saveOriginalFile('lv', lvFile.name, lvBuf, lvEncoding);
   await db.saveOriginalFile('x31', x31File.name, x31Buf, x31Encoding);
   await db.saveMeta({
@@ -193,6 +202,53 @@ async function handleImport(lvFile, x31File) {
   if (isReimport && (orphanedCount > 0 || addedCount > 0)) {
     showReimportDialog(addedCount, orphanedCount);
   }
+
+  if (csvOverlayResult) {
+    let msg = `Arbeitsstand aus Excel-Sicherung übernommen: ${csvOverlayResult.restoredCount} von ${csvOverlayResult.totalCount} Position(en).`;
+    if (csvOverlayResult.unmatchedCount > 0) {
+      msg += ` ${csvOverlayResult.unmatchedCount} Position(en) aus der Datei konnten keiner aktuellen LV-Position zugeordnet werden.`;
+    }
+    showToast(msg, csvOverlayResult.unmatchedCount > 0);
+  }
+}
+
+/**
+ * Überträgt einen zuvor per "Excel-Sicherung" exportierten Arbeitsstand
+ * (Geprüft, Menge, Klassifikation, Bemerkung) auf die gerade importierten
+ * Positionen — z.B. nach einem Gerätewechsel oder gelöschten Website-Daten,
+ * wenn IndexedDB leer ist. Zuordnung primär über die technische ID-Spalte,
+ * sonst über die Positionsnummer (siehe parseAufmassCsv). Positionen aus der
+ * Datei, die keiner aktuellen LV-Position zugeordnet werden können, werden
+ * gezählt statt stillschweigend ignoriert.
+ */
+async function applyCsvOverlay(csvFile, lv) {
+  const buf = await csvFile.arrayBuffer();
+  const text = new TextDecoder('utf-8').decode(buf);
+  const records = parseAufmassCsv(text);
+
+  const posNumToId = new Map();
+  for (const [id, item] of lv.itemsById) posNumToId.set(item.positionNumber, id);
+
+  let restoredCount = 0;
+  let unmatchedCount = 0;
+  for (const rec of records) {
+    const targetId = rec.id && lv.itemsById.has(rec.id) ? rec.id : posNumToId.get(rec.positionNumber);
+    const existing = targetId ? await db.get('positions', targetId) : null;
+    if (!existing) {
+      unmatchedCount++;
+      continue;
+    }
+    existing.geprueft = rec.geprueft;
+    if (rec.menge !== null) {
+      existing.menge = rec.menge;
+      existing.mengeTouchedByUser = true;
+    }
+    existing.klassifikation = rec.klassifikation;
+    existing.bemerkung = rec.bemerkung;
+    await db.savePosition(existing);
+    restoredCount++;
+  }
+  return { restoredCount, unmatchedCount, totalCount: records.length };
 }
 
 function showReimportDialog(addedCount, orphanedCount) {
@@ -689,9 +745,12 @@ function downloadText(text, filename, mimeType) {
 }
 
 // ---------------------------------------------------------------------------
-// Excel-Sicherung (CSV, Excel-kompatibel) — reine Zusatzsicherung der
-// erfassten Aufmaßdaten, damit sie notfalls von Hand in ORCA nachgetragen
-// werden können. Kein Rückimport-Format, nur zum Lesen/Abtippen gedacht.
+// Excel-Sicherung (CSV, Excel-kompatibel) — Sicherungskopie der erfassten
+// Aufmaßdaten (zum Lesen/Abtippen bei ORCA-Problemen) UND gleichzeitig als
+// Wiederherstellungs-Datei beim Import nutzbar (siehe parseAufmassCsv/
+// applyCsvOverlay), z.B. nach einem Gerätewechsel oder Löschen der
+// Website-Daten, wenn IndexedDB leer ist. Kein GAEB-Rückimport-Format — nur
+// für den Import in diese App selbst gedacht.
 // ---------------------------------------------------------------------------
 function csvEscape(value) {
   const str = value === null || value === undefined ? '' : String(value);
@@ -721,6 +780,109 @@ function forceExcelText(value) {
   return `="${str.replace(/"/g, '""')}"`;
 }
 
+/**
+ * Löst ein per forceExcelText erzeugtes Excel-Text-Formel-Feld (="wert")
+ * wieder zum reinen Wert auf. Falls das Feld (z.B. nach manueller Bearbeitung
+ * in Excel) bereits als Klartext vorliegt, wird es unverändert zurückgegeben.
+ */
+function stripExcelText(value) {
+  if (value == null) return '';
+  // parseCsvText hat CSV-Quoting bereits aufgelöst — übrig bleibt genau der
+  // Zellinhalt ="wert", also KEINE weitere ""-Entschärfung nötig.
+  const m = value.match(/^="(.*)"$/);
+  return m ? m[1] : value;
+}
+
+/**
+ * Generischer, RFC4180-artiger CSV-Parser (Semikolon-getrennt, "" als
+ * Escape für Anführungszeichen innerhalb gequoteter Felder, Felder dürfen
+ * eingebettete Zeilenumbrüche enthalten). Bewusst selbst geschrieben statt
+ * ein einfaches split(';') — Bemerkungen können Semikolons/Anführungszeichen
+ * enthalten (siehe csvEscape beim Export).
+ */
+function parseCsvText(text) {
+  const rows = [];
+  let row = [];
+  let field = '';
+  let inQuotes = false;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (inQuotes) {
+      if (c === '"') {
+        if (text[i + 1] === '"') {
+          field += '"';
+          i++;
+        } else {
+          inQuotes = false;
+        }
+      } else {
+        field += c;
+      }
+      continue;
+    }
+    if (c === '"') {
+      inQuotes = true;
+    } else if (c === ';') {
+      row.push(field);
+      field = '';
+    } else if (c === '\r') {
+      // ignorieren, \n beendet die Zeile
+    } else if (c === '\n') {
+      row.push(field);
+      rows.push(row);
+      row = [];
+      field = '';
+    } else {
+      field += c;
+    }
+  }
+  if (field.length > 0 || row.length > 0) {
+    row.push(field);
+    rows.push(row);
+  }
+  return rows.filter((r) => !(r.length === 1 && r[0] === ''));
+}
+
+/**
+ * Liest eine von dieser App exportierte Excel-Sicherung (CSV) wieder ein.
+ * Erkennt Spalten anhand der Kopfzeile (robust gegenüber Spaltenreihenfolge/
+ * zukünftigen neuen Spalten). Erwartet mindestens "Positionsnummer"; die
+ * technische "ID"-Spalte ist optional (ältere Exporte ohne diese Spalte
+ * fallen automatisch auf den Abgleich per Positionsnummer zurück).
+ */
+function parseAufmassCsv(text) {
+  const withoutBom = text.replace(/^﻿/, '');
+  const rows = parseCsvText(withoutBom);
+  if (rows.length < 1) throw new Error('Die Datei enthält keine Daten.');
+  const header = rows[0];
+  const col = (name) => header.findIndex((h) => h === name || h.startsWith(name));
+  const iId = col('ID');
+  const iPos = col('Positionsnummer');
+  const iGeprueft = col('Geprüft');
+  const iMenge = col('Erfasste Menge');
+  const iKlass = col('Klassifikation');
+  const iBemerkung = col('Bemerkung');
+  if (iPos === -1) {
+    throw new Error('Spalte "Positionsnummer" nicht gefunden — ist das eine von dieser App exportierte Excel-Sicherung?');
+  }
+
+  const records = [];
+  for (let r = 1; r < rows.length; r++) {
+    const row = rows[r];
+    if (!row || row.every((f) => f === '')) continue;
+    const menge = iMenge !== -1 && row[iMenge] ? parseFloat(row[iMenge].replace(',', '.')) : null;
+    records.push({
+      id: iId !== -1 ? row[iId] || null : null,
+      positionNumber: stripExcelText(row[iPos] || ''),
+      geprueft: iGeprueft !== -1 && (row[iGeprueft] || '').trim().toLowerCase() === 'ja',
+      menge: Number.isFinite(menge) ? menge : null,
+      klassifikation: iKlass !== -1 && (row[iKlass] || '').startsWith('Geliefert') ? 'geliefert' : 'montiert',
+      bemerkung: iBemerkung !== -1 ? row[iBemerkung] || '' : '',
+    });
+  }
+  return records;
+}
+
 function handleExcelExport() {
   try {
     const header = [
@@ -734,6 +896,7 @@ function handleExcelExport() {
       'Klassifikation',
       'Abrechnungsmenge',
       'Bemerkung',
+      'ID (technisch, für Re-Import — bitte nicht ändern)',
     ];
     const rows = [header];
 
@@ -753,6 +916,7 @@ function handleExcelExport() {
         rec.klassifikation === 'geliefert' ? 'Geliefert (×0,8)' : 'Montiert (×1,0)',
         formatCsvNumber(effectiveQty),
         rec.bemerkung || '',
+        entry.id,
       ]);
     }
 

@@ -1,7 +1,7 @@
 // App-Shell-Caching für vollständige Offline-Nutzung.
 // WICHTIG: CACHE_NAME bei JEDEM Deploy hochzählen, sonst bekommen bereits
 // installierte Geräte Updates nicht mit (siehe README).
-const CACHE_NAME = 'aufmass-gaeb-v3';
+const CACHE_NAME = 'aufmass-gaeb-v4';
 
 const APP_SHELL = [
   './',
